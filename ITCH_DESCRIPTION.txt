@@ -1,0 +1,52 @@
+ITCH.IO PAGE DESCRIPTION
+========================
+(Copy everything below this line)
+
+
+The Sun is dying. An alien organism called Astrophage is draining its energy. One ship. One destination. Twelve light-years.
+
+Hail Mary: Flight Simulator is a real-physics interstellar flight sim built entirely in the browser. Fly the Hail Mary from Earth orbit to Tau Ceti, collect Taumoeba from Adrian's Venus-like atmosphere, breed a nitrogen-resistant strain, and send the beetles home to save the Sol.
+
+No install. No downloads. Just open and fly.
+
+REAL PHYSICS (not kidding)
+
+- RK4 numerical integration (same method NASA's GMAT uses)
+- N-body gravity from every solar system body
+- JPL planetary ephemeris data (Standish & Williams J2000.0)
+- Special relativistic time dilation and acceleration
+- US Standard Atmosphere 1976 model
+- Sutton-Graves convective reentry heating
+- Mach-dependent drag with hypersonic bow shock multiplier
+- Patched conics trajectory prediction
+- Tau Ceti exoplanets from real astronomical data (Feng et al. 2017)
+- NASA satellite textures for Earth and Moon
+
+THE MISSION
+
+1. Launch from ISS orbit
+2. Cross 12 light-years to Tau Ceti (yes, with time warp)
+3. Orbit Adrian (Tau Ceti e) - a super-Earth with a crushing CO2 atmosphere
+4. Lower the xenonite chain into the atmosphere to collect Taumoeba
+5. Run the centrifuge to breed nitrogen-resistant strains
+6. Launch the beetles carrying the cure back to Earth
+
+WHAT THIS IS
+
+A love letter to Andy Weir's Project Hail Mary, built as a flight simulator with as much real science as I could pack into a single HTML file. The orbital mechanics are real. The relativistic time dilation is real. The atmospheric reentry heating uses the same formula NASA uses. The exoplanet data comes from actual published research.
+
+What's simplified: it's 2D (no orbital inclinations), atmospheric drag is boosted for gameplay, and we let you keep flying after your canonical fuel runs out (because it's a sim, not an exam).
+
+CONTROLS
+
+Arrow keys: fly. Shift: max throttle. Space: cut engines. B: emergency brake. H: heading lock. Z/X: time warp. J: deploy chain. P: centrifuge. K: launch beetles. ESC: pause. ?: help.
+
+Mobile touch controls included.
+
+TECH
+
+The entire game is one 208 KB HTML file plus four small assets (NASA textures, ship sprite, Voyager 1 data). Total size under 1.5 MB. No frameworks. No dependencies. No build step. Just canvas.
+
+---
+A fan project by David Alfonso Castro.
+Project Hail Mary is a novel by Andy Weir. Not affiliated with or endorsed by Andy Weir, Penguin Random House, or Amazon/MGM Studios.
