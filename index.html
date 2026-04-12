@@ -4186,16 +4186,12 @@ requestAnimationFrame(gameLoop);
 // MOBILE TOUCH CONTROLS + HUD DRAWER
 // Detects touch OR small screen. Touch buttons + collapsible HUD.
 // ═══════════════════════════════════════════
-let mobileActive=false;
-let hudOpen=true; // HUD drawer state — open by default on desktop, closed on mobile
+let mobileActive=false; // ONLY set true by actual touch event
+let hudOpen=true;
 let _mobileButtons=[];
 
-// Detect on first touch OR small screen
-function checkMobile(){
-  const small=W<900||H<600;
-  if(small&&!mobileActive){mobileActive=true;hudOpen=false;} // auto-close HUD on mobile
-  return mobileActive||small;
-}
+function checkMobile(){return mobileActive;}
+// Activate ONLY on real touch — not screen size, not maxTouchPoints, not iframe detection
 window.addEventListener('touchstart',function once(){mobileActive=true;hudOpen=false;window.removeEventListener('touchstart',once);},{once:true});
 
 function getMobileButtons(){
