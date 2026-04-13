@@ -957,8 +957,8 @@ function stepChain(dt){
   const tceCol=tce||bodies.find(b=>b.name==='Tau Ceti e'); // reuse tce from sampler guidance
   if(tceCol){
     const tipAlt=Math.hypot(chain.tipX-tceCol.x,chain.tipY-tceCol.y)-tceCol.radius;
-    if(tipAlt>0&&tipAlt<80000&&chain.linksDeployed>1000){ // 80km — Taumoeba live throughout Adrian's thick atmosphere
-      const depthFactor=1-Math.min(1,tipAlt/80000);
+    if(tipAlt>0&&tipAlt<200000&&chain.linksDeployed>1000){ // 200km — Taumoeba live throughout Adrian's deep atmosphere
+      const depthFactor=1-Math.min(1,tipAlt/200000);
       const lenFactor=chain.linksDeployed/chain.totalLinks;
       chain.sampleRate=depthFactor*lenFactor*10;
       chain.taumoebaCollected+=chain.sampleRate*dt;
@@ -999,9 +999,10 @@ function checkCollisions(pdt){
     const spdA=Math.hypot(rkt.vx-tce.vx,rkt.vy-tce.vy);
     if(altA>0&&altA<2.5e5){
       const rhoA=67*Math.exp(-altA/15000);
-      if(spdA>15000&&altA<8e4){endGame('crash','Adrian (vaporized in atmosphere — too fast)',spdA);return;}
-      if(spdA>1500){
-        const heatRate=Math.sqrt(Math.max(rhoA,1e-8))*Math.pow(spdA,3)*8e-12;
+      if(spdA>15000&&altA<5e4){endGame('crash','Adrian (vaporized in atmosphere — too fast)',spdA);return;}
+      if(spdA>3000){
+        // Astrophage hull shielding absorbs significant heat — ship survives longer than it should
+        const heatRate=Math.sqrt(Math.max(rhoA,1e-8))*Math.pow(spdA,3)*8e-14;
         heatLevel+=heatRate*dt;
         beingHeated=true;
       }
@@ -2646,78 +2647,108 @@ function drawMoonOrbit(mpp){
 function drawAtmosphere(mpp){
   if(!earth)return;
   const[cx,cy]=w2s(earth.x,earth.y),sr=R_E/mpp;
-  if(sr<1.4||sr>8000)return; // skip when too small OR too large (perf)
+  if(sr<1.4)return;
   // Real atmosphere heights in screen pixels
-  const atmH=1e5/mpp;   // 100 km — Karman line (edge of atmosphere)
+  const atmH=1e5/mpp;   // 100 km — Karman line
   const exoH=5e5/mpp;   // 500 km — exosphere
-  ctx.save();ctx.globalCompositeOperation='screen';
+  ctx.save();
 
-  // Outer exosphere haze
-  if(exoH>1){
-    const outerGlow=ctx.createRadialGradient(cx,cy,sr,cx,cy,sr+exoH);
-    outerGlow.addColorStop(0,'rgba(60,130,255,0.12)');
-    outerGlow.addColorStop(0.3,'rgba(80,150,255,0.06)');
-    outerGlow.addColorStop(1,'rgba(80,150,255,0)');
-    ctx.beginPath();ctx.arc(cx,cy,sr+exoH,0,Math.PI*2);ctx.fillStyle=outerGlow;ctx.fill();
+  // Gradient hazes — only when not zoomed in too far (perf)
+  if(sr<6000){
+    ctx.globalCompositeOperation='screen';
+    if(exoH>1){
+      const outerGlow=ctx.createRadialGradient(cx,cy,sr,cx,cy,sr+exoH);
+      outerGlow.addColorStop(0,'rgba(60,130,255,0.12)');
+      outerGlow.addColorStop(0.3,'rgba(80,150,255,0.06)');
+      outerGlow.addColorStop(1,'rgba(80,150,255,0)');
+      ctx.beginPath();ctx.arc(cx,cy,sr+exoH,0,Math.PI*2);ctx.fillStyle=outerGlow;ctx.fill();
+    }
+    if(atmH>0.5){
+      const shellGlow=ctx.createRadialGradient(cx,cy,sr,cx,cy,sr+atmH);
+      shellGlow.addColorStop(0,'rgba(100,180,255,0.2)');
+      shellGlow.addColorStop(0.5,'rgba(80,160,255,0.12)');
+      shellGlow.addColorStop(1,'rgba(60,130,255,0)');
+      ctx.beginPath();ctx.arc(cx,cy,sr+atmH,0,Math.PI*2);ctx.fillStyle=shellGlow;ctx.fill();
+    }
+    ctx.globalCompositeOperation='source-over';
   }
-  // Dense atmosphere shell (surface to 100km)
-  if(atmH>0.5){
-    const shellGlow=ctx.createRadialGradient(cx,cy,sr,cx,cy,sr+atmH);
-    shellGlow.addColorStop(0,'rgba(100,180,255,0.2)');
-    shellGlow.addColorStop(0.5,'rgba(80,160,255,0.12)');
-    shellGlow.addColorStop(1,'rgba(60,130,255,0)');
-    ctx.beginPath();ctx.arc(cx,cy,sr+atmH,0,Math.PI*2);ctx.fillStyle=shellGlow;ctx.fill();
-  }
-  // Karman line — sharp visible boundary at exactly 100 km
-  if(atmH>2){
+
+  // Karman line — always visible even at high zoom
+  if(atmH>1.5){
     ctx.beginPath();ctx.arc(cx,cy,sr+atmH,0,Math.PI*2);
     ctx.strokeStyle='rgba(140,200,255,0.35)';
     ctx.lineWidth=Math.max(1,Math.min(2.5,atmH*0.05));
-    ctx.setLineDash([Math.max(3,atmH*0.1),Math.max(2,atmH*0.06)]);
+    ctx.setLineDash([Math.max(4,atmH*0.08),Math.max(3,atmH*0.05)]);
     ctx.stroke();ctx.setLineDash([]);
   }
+
+  // Surface/ground line — always visible
+  if(sr>5){
+    ctx.beginPath();ctx.arc(cx,cy,sr,0,Math.PI*2);
+    ctx.strokeStyle='rgba(170,230,255,0.2)';
+    ctx.lineWidth=1;ctx.stroke();
+  }
+
   ctx.restore();
 }
 
 function drawTauCetiEAtmosphere(mpp){
   const b=bodies.find(b=>b.name==='Tau Ceti e');if(!b)return;
-  const[cx,cy]=w2s(b.x,b.y),sr=b.radius/mpp;if(sr<2||sr>6000)return;
-  // Real atmosphere: collection zone 0-50 km, visible haze to ~100 km
-  const collectH=80000/mpp;   // 80 km — Taumoeba breeding layer (thicker atmosphere)
-  const atmH=250000/mpp;      // 250 km — visible atmosphere (Venus-like, extends far)
-  ctx.save();ctx.globalCompositeOperation='screen';
+  const[cx,cy]=w2s(b.x,b.y),sr=b.radius/mpp;if(sr<2)return;
+  const collectH=200000/mpp;  // 200 km — Taumoeba collection zone
+  const atmH=250000/mpp;      // 250 km — visible atmosphere edge
+  ctx.save();
 
-  // Outer atmosphere haze (greenish — Adrian's atmosphere)
-  if(atmH>0.5){
-    const outer=ctx.createRadialGradient(cx,cy,sr,cx,cy,sr+atmH);
-    outer.addColorStop(0,'rgba(80,220,100,0.15)');
-    outer.addColorStop(0.5,'rgba(60,180,80,0.08)');
-    outer.addColorStop(1,'rgba(40,140,60,0)');
-    ctx.beginPath();ctx.arc(cx,cy,sr+atmH,0,Math.PI*2);ctx.fillStyle=outer;ctx.fill();
+  // Atmosphere haze — only when not zoomed in too far (perf)
+  if(sr<5000){
+    ctx.globalCompositeOperation='screen';
+    if(atmH>0.5){
+      const outer=ctx.createRadialGradient(cx,cy,sr,cx,cy,sr+atmH);
+      outer.addColorStop(0,'rgba(80,220,100,0.15)');
+      outer.addColorStop(0.5,'rgba(60,180,80,0.08)');
+      outer.addColorStop(1,'rgba(40,140,60,0)');
+      ctx.beginPath();ctx.arc(cx,cy,sr+atmH,0,Math.PI*2);ctx.fillStyle=outer;ctx.fill();
+    }
+    if(collectH>0.3){
+      const inner=ctx.createRadialGradient(cx,cy,sr,cx,cy,sr+collectH);
+      inner.addColorStop(0,'rgba(120,255,100,0.2)');
+      inner.addColorStop(0.6,'rgba(100,220,80,0.1)');
+      inner.addColorStop(1,'rgba(80,180,60,0)');
+      ctx.beginPath();ctx.arc(cx,cy,sr+collectH,0,Math.PI*2);ctx.fillStyle=inner;ctx.fill();
+    }
+    ctx.globalCompositeOperation='source-over';
   }
-  // Dense lower atmosphere
-  if(collectH>0.3){
-    const inner=ctx.createRadialGradient(cx,cy,sr,cx,cy,sr+collectH);
-    inner.addColorStop(0,'rgba(120,255,100,0.2)');
-    inner.addColorStop(0.6,'rgba(100,220,80,0.1)');
-    inner.addColorStop(1,'rgba(80,180,60,0)');
-    ctx.beginPath();ctx.arc(cx,cy,sr+collectH,0,Math.PI*2);ctx.fillStyle=inner;ctx.fill();
-  }
-  // Collection zone boundary — dashed ring at exactly 50 km (where Taumoeba live)
-  if(collectH>2){
+
+  // TAUMOEBA COLLECTION LINE — always visible, bright green dashed ring at 200km
+  // This is the altitude the chain tip needs to reach
+  if(collectH>1.5){
     ctx.beginPath();ctx.arc(cx,cy,sr+collectH,0,Math.PI*2);
-    ctx.strokeStyle='rgba(80,255,80,0.4)';
-    ctx.lineWidth=Math.max(1,Math.min(2,collectH*0.04));
-    ctx.setLineDash([Math.max(3,collectH*0.08),Math.max(2,collectH*0.05)]);
+    ctx.strokeStyle='rgba(80,255,80,0.5)';
+    ctx.lineWidth=Math.max(1,Math.min(2.5,collectH*0.03));
+    ctx.setLineDash([Math.max(4,collectH*0.06),Math.max(3,collectH*0.04)]);
     ctx.stroke();ctx.setLineDash([]);
+    // Label
+    if(collectH>20&&collectH<3000){
+      ctx.font='500 9px Exo 2,sans-serif';ctx.textAlign='left';ctx.fillStyle='rgba(80,255,80,0.5)';
+      ctx.fillText('TAUMOEBA ZONE',cx+sr+collectH+6,cy-4);
+    }
   }
-  // Atmosphere edge at 100 km
-  if(atmH>3){
+
+  // Atmosphere edge at 250km — always visible
+  if(atmH>2){
     ctx.beginPath();ctx.arc(cx,cy,sr+atmH,0,Math.PI*2);
-    ctx.strokeStyle='rgba(140,255,140,0.2)';
-    ctx.lineWidth=Math.max(0.5,Math.min(1.5,atmH*0.03));
+    ctx.strokeStyle='rgba(140,255,140,0.25)';
+    ctx.lineWidth=Math.max(0.5,Math.min(1.5,atmH*0.02));
     ctx.stroke();
   }
+
+  // Surface line — the actual planet ground
+  if(sr>5){
+    ctx.beginPath();ctx.arc(cx,cy,sr,0,Math.PI*2);
+    ctx.strokeStyle='rgba(190,255,145,0.3)';
+    ctx.lineWidth=1;ctx.stroke();
+  }
+
   ctx.restore();
 }
 
@@ -2777,7 +2808,9 @@ function initTCESwirls(){
 initTCESwirls();
 
 function drawTauCetiESwirls(cx,cy,sr){
-  if(sr<8||sr>5000)return; // skip when too small or too large (perf)
+  if(sr<8)return;
+  // At very high zoom, only draw bands (skip expensive vortices and wisps)
+  const fullDetail=sr<5000;
   const time=performance.now()*.001+simTime*.00002;
 
   ctx.save();
@@ -2831,7 +2864,8 @@ function drawTauCetiESwirls(cx,cy,sr){
     }
   }
 
-  // === VORTEX STORMS — spiraling cyclones ===
+  // === VORTEX STORMS — spiraling cyclones (skip at extreme zoom) ===
+  if(fullDetail)
   for(const s of tceSwirls){
     if(s.type!=='vortex')continue;
     const lonNow=s.lon+time*s.speed;
@@ -2888,7 +2922,8 @@ function drawTauCetiESwirls(cx,cy,sr){
     ctx.beginPath();ctx.arc(vx,vy,vr*1.3,0,Math.PI*2);ctx.fill();
   }
 
-  // === HIGH-ALTITUDE WISPS — fast thin streaks ===
+  // === HIGH-ALTITUDE WISPS — fast thin streaks (skip at extreme zoom) ===
+  if(fullDetail)
   for(const s of tceSwirls){
     if(s.type!=='wisp')continue;
     const lonNow=s.lon+time*s.speed;
