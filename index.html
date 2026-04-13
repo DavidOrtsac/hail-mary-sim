@@ -2120,6 +2120,9 @@ function drawRealisticPlanet(cx,cy,sr,img,name){
 
 function drawBody(b,mpp){
   const[cx,cy]=w2s(b.x,b.y),sr=b.radius/mpp;
+  // Skip bodies completely off-screen (with margin for glow/labels)
+  const margin=Math.min(sr*2+50,500);
+  if(cx<-margin||cx>W+margin||cy<-margin||cy>H+margin)return;
   if(b.probe){
     const px=Math.max(2,Math.min(4,2.2+Math.max(0,cam.zoom-9)*.2));
     ctx.save();ctx.translate(cx,cy);ctx.globalCompositeOperation='screen';
@@ -2974,46 +2977,60 @@ function drawPrediction(mpp){
     const b=patch.bodyRef,el=patch.elements;
     if(!b||!el)continue;
 
-    // Generate conic points at draw time using body's CURRENT position (no jitter)
+    // Anchor: compute body screen position ONCE, then offset all orbit points from it.
+    // This eliminates floating-point jitter from subtracting huge world coordinates.
+    const[bcx,bcy]=w2s(b.x,b.y);
+    const invMpp=1/mpp;
+
     let nuStart,nuEnd,nPts=180;
     if(el.e<1){nuStart=-Math.PI;nuEnd=Math.PI;}
     else{const nm=Math.acos(Math.max(-0.9999,-1/el.e))-0.01;nuStart=-nm;nuEnd=nm;}
     const step=(nuEnd-nuStart)/nPts;
 
-    // Draw smooth conic
+    // Convert orbit point relative to body, then to screen via body's screen pos
+    function orbitW2S(nu){
+      const pt=conicPointAt(0,0,el,nu); // relative to body origin
+      if(!pt)return null;
+      return[bcx+pt.x*invMpp, bcy-pt.y*invMpp];
+    }
+
+    // Draw smooth conic — skip segments way off screen
     ctx.strokeStyle=patch.color;ctx.lineWidth=1.5;ctx.setLineDash([5,5]);
     ctx.beginPath();
     let started=false,lx=0,ly=0;
     for(let i=0;i<=nPts;i++){
       const nu=nuStart+step*i;
-      const pt=conicPointAt(b.x,b.y,el,nu);
-      if(!pt)continue;
-      const[sx,sy]=w2s(pt.x,pt.y);
+      const sp=orbitW2S(nu);
+      if(!sp)continue;
+      const sx=sp[0],sy=sp[1];
+      // Clip: skip points way off screen (perf)
+      const margin=200;
+      if(sx<-margin||sx>W+margin||sy<-margin||sy>H+margin){
+        started=false;continue;
+      }
       if(!started){ctx.moveTo(sx,sy);started=true;lx=sx;ly=sy;continue;}
-      if(Math.abs(sx-lx)>0.5||Math.abs(sy-ly)>0.5){ctx.lineTo(sx,sy);lx=sx;ly=sy;}
+      if(Math.abs(sx-lx)>0.4||Math.abs(sy-ly)>0.4){ctx.lineTo(sx,sy);lx=sx;ly=sy;}
     }
     ctx.stroke();ctx.setLineDash([]);
 
-    // Apoapsis marker (computed from live body position)
+    // Apoapsis marker
     if(el.e<1&&isFinite(patch.apAlt)){
-      const apPt=conicPointAt(b.x,b.y,el,Math.PI);
-      if(apPt){
-        const[ax,ay]=w2s(apPt.x,apPt.y);
-        ctx.fillStyle='#4f4';ctx.beginPath();ctx.arc(ax,ay,4,0,Math.PI*2);ctx.fill();
-        ctx.strokeStyle='#4f4';ctx.lineWidth=1;ctx.beginPath();ctx.arc(ax,ay,7,0,Math.PI*2);ctx.stroke();
+      const ap=orbitW2S(Math.PI);
+      if(ap){
+        ctx.fillStyle='#4f4';ctx.beginPath();ctx.arc(ap[0],ap[1],4,0,Math.PI*2);ctx.fill();
+        ctx.strokeStyle='#4f4';ctx.lineWidth=1;ctx.beginPath();ctx.arc(ap[0],ap[1],7,0,Math.PI*2);ctx.stroke();
         ctx.font='9px Exo 2,sans-serif';ctx.textAlign='left';ctx.fillStyle='#4f4';
-        ctx.fillText('AP '+fmtDist(patch.apAlt),ax+10,ay-3);
+        ctx.fillText('AP '+fmtDist(patch.apAlt),ap[0]+10,ap[1]-3);
       }
     }
     // Periapsis marker
-    const pePt=conicPointAt(b.x,b.y,el,0);
-    if(pePt){
-      const[px,py]=w2s(pePt.x,pePt.y);
+    const pe=orbitW2S(0);
+    if(pe){
       const peCol=patch.peAlt<0?'#f44':'#fa0';
-      ctx.fillStyle=peCol;ctx.beginPath();ctx.arc(px,py,4,0,Math.PI*2);ctx.fill();
-      ctx.strokeStyle=peCol;ctx.lineWidth=1;ctx.beginPath();ctx.arc(px,py,7,0,Math.PI*2);ctx.stroke();
+      ctx.fillStyle=peCol;ctx.beginPath();ctx.arc(pe[0],pe[1],4,0,Math.PI*2);ctx.fill();
+      ctx.strokeStyle=peCol;ctx.lineWidth=1;ctx.beginPath();ctx.arc(pe[0],pe[1],7,0,Math.PI*2);ctx.stroke();
       ctx.font='9px Exo 2,sans-serif';ctx.textAlign='left';ctx.fillStyle=peCol;
-      ctx.fillText('PE '+fmtDist(patch.peAlt),px+10,py-3);
+      ctx.fillText('PE '+fmtDist(patch.peAlt),pe[0]+10,pe[1]-3);
     }
   }
   // Update predAp/predPe from first patch for HUD
