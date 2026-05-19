@@ -24,6 +24,13 @@
 <link rel="preload" as="image" href="./assets/earth_8k_clouds.jpg">
 <link rel="preload" as="image" href="./assets/earth_8k_night.jpg">
 <link rel="preload" as="image" href="./assets/earth_8k_spec.jpg">
+<!-- ISS mode only: SGP4 lib + live TLE preconnect. No-op unless ?iss=1. -->
+<link rel="modulepreload" href="./vendor/satellite.es.min.js">
+<link rel="preconnect" href="https://celestrak.org" crossorigin>
+<link rel="preconnect" href="https://flagcdn.com" crossorigin>
+<link rel="preconnect" href="https://api.bigdatacloud.net" crossorigin>
+<link rel="preconnect" href="https://restcountries.com" crossorigin>
+<link rel="preconnect" href="https://api.worldbank.org" crossorigin>
 
 <style>
   *{box-sizing:border-box}
@@ -95,6 +102,139 @@
   #obsTime{position:absolute;left:50%;top:12px;transform:translateX(-50%);font-family:monospace;font-size:11px;letter-spacing:.18em;color:rgba(255,184,90,.75);background:rgba(2,6,14,.35);padding:4px 10px;border:1px solid rgba(255,184,90,.18);border-radius:3px;pointer-events:none;display:none}
   body.observer-mode.warped #obsTime{display:block}
 
+  /* ===== ISS MODE — broadcast-style overlay (NASA livestream aesthetic) ======
+     Active only when body.iss-mode is set (URL ?iss=1). All non-ISS UIs are
+     hidden; in their place a bottom strip shows a flat world map, the current
+     sub-satellite location with country flag, a LIVE badge, and telemetry. */
+  body.iss-mode #hud,
+  body.iss-mode #notice,
+  body.iss-mode #cross,
+  body.iss-mode #mobileUI,
+  body.iss-mode #obsTime,
+  body.iss-mode #fpsChip{display:none !important}
+  body.iss-mode #boot{display:none}
+  body.iss-mode{background:#000}
+
+  /* Bottom broadcast strip — height tuned to NASA livestream proportion (~14%
+     of a 1080p frame). Sits over the canvas, so split-screen viewports stay
+     above it unobscured. */
+  #issStrip{display:none}
+  /* NASA-livestream layout:
+       Row 1: [ map ] [ big place name across the right column         ]
+       Row 2: [ map ] [ flag+LIVE block | Country Information panel    ]
+     Map spans both rows on the left. */
+  body.iss-mode #issStrip{
+    display:grid;
+    grid-template-columns:auto 1fr;
+    grid-template-rows:auto auto;
+    grid-template-areas: "map name" "map body";
+    position:absolute; left:0; right:0; bottom:0;
+    padding:10px 14px; gap:6px 14px;
+    background:linear-gradient(to top, rgba(8,10,14,.96) 0%, rgba(8,10,14,.86) 75%, rgba(8,10,14,0) 100%);
+    border-top:1px solid rgba(255,255,255,.10);
+    color:#f4f6f8; font-family:'Open Sans','Helvetica Neue',Inter,system-ui,-apple-system,sans-serif;
+    z-index:7; pointer-events:none; align-items:stretch;
+  }
+  /* Flat equirectangular world map (left, spans both rows). */
+  #issMapWrap{grid-area:map; position:relative; width:300px; height:170px; background:#0a1322; border:1px solid rgba(255,255,255,.10); overflow:hidden; box-shadow:0 1px 0 rgba(255,255,255,.04) inset}
+  #issMapWrap .mapLabel{position:absolute; left:6px; top:5px; font-size:9px; letter-spacing:.14em; color:rgba(255,255,255,.75); text-transform:uppercase; font-weight:700; text-shadow:0 1px 2px rgba(0,0,0,.8)}
+  #issMapImg{position:absolute; inset:0; width:100%; height:100%; object-fit:cover; opacity:.92; filter:saturate(1.05) brightness(.95)}
+  #issMapCanvas{position:absolute; inset:0; width:100%; height:100%}
+  /* Row 1: large light-weight place name across the top of the right column. */
+  #issPlaceName{
+    grid-area:name; padding:6px 10px 2px;
+    color:#fff; font-weight:300; font-size:34px; letter-spacing:-.005em;
+    line-height:1.1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  /* Row 2: flag/LIVE on the left, fixed-width country card, fixed brand side.
+     EVERYTHING is fixed-size + flex-shrink:0 so panel cycling and flag
+     visibility changes NEVER reflow the layout. */
+  #issPlaceBody{
+    grid-area:body; display:flex; align-items:stretch;
+    gap:12px; min-width:0; padding:0 8px 4px;
+  }
+  #issFlagBlock{
+    display:flex; flex-direction:column; gap:2px;
+    width:138px; height:124px;             /* locked: 92 + 2 + 30 */
+    flex-shrink:0;
+  }
+  /* Flag slot — always reserves 138x92. Holds the flag <img> AND an ocean
+     placeholder; the placeholder is hidden whenever the flag image has
+     successfully loaded (.on class), and shown otherwise. Layout NEVER
+     reflows whether we're over a country or open water. */
+  #issFlagSlot{
+    position:relative; width:138px; height:92px; flex-shrink:0;
+    border:1px solid rgba(255,255,255,.16);
+    background:linear-gradient(155deg, #0c2a4d 0%, #061523 100%);
+    overflow:hidden;
+  }
+  #issFlag{
+    position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
+    visibility:hidden; opacity:0; transition:opacity .25s ease;
+  }
+  #issFlag.on{visibility:visible; opacity:1}
+  #issOceanLabel{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    padding:6px 8px; color:rgba(225,238,250,.90);
+    font-size:13px; font-weight:700; letter-spacing:.04em;
+    line-height:1.2; text-align:center; text-transform:uppercase;
+    pointer-events:none;
+  }
+  #issFlag.on ~ #issOceanLabel{display:none}
+  #issFlagBlock .livebadge{
+    display:flex; align-items:center; justify-content:center; gap:7px;
+    height:30px; background:#c8202a; color:#fff;
+    font-size:13px; font-weight:700; letter-spacing:.10em;
+  }
+  #issFlagBlock .livebadge .dot{width:7px; height:7px; border-radius:50%; background:#fff; animation:issblink 1.4s infinite ease-in-out}
+  /* Top-left watermark removed — brand now lives only in the strip beside
+     the country card (no more duplicate). */
+  #issBrandMark{display:none !important}
+  @keyframes issblink{0%,100%{opacity:.4}50%{opacity:1}}
+  /* Cycling Country Information card — FIXED width and height. Cycling
+     between panels happens via opacity inside this stable box; no reflow. */
+  #issStats{
+    position:relative; width:380px; height:124px; flex-shrink:0;
+    padding:10px 16px; background:rgba(20,22,28,.85);
+    border:1px solid rgba(255,255,255,.08); overflow:hidden;
+    display:flex; align-items:center;
+  }
+  #issStats .pips{display:none !important}  /* dots removed for cleanliness */
+  /* Brand-side panel removed. */
+  #issBrandSide{display:none !important}
+  #issStats .panel{display:none; flex-direction:column; gap:1px; opacity:0; transition:opacity .35s ease; width:100%}
+  #issStats .panel.on{display:flex; opacity:1}
+  #issStats .head{font-size:13px; font-weight:700; letter-spacing:.02em; color:#fff; margin-bottom:5px; line-height:1.1}
+  #issStats .row{display:flex; justify-content:space-between; gap:8px; font-size:12px; line-height:1.3; color:#d8dfe6}
+  #issStats .row span{color:rgba(216,223,230,.66); font-weight:500}
+  #issStats .row b{color:#fff; font-weight:600; font-variant-numeric:tabular-nums}
+  #issStats .big{font-size:14px; font-weight:700; color:#fff; line-height:1.2; margin-bottom:3px}
+  #issStats .sml{font-size:11px; color:rgba(216,223,230,.72); line-height:1.4}
+  #issStats .tag{font-size:9px; letter-spacing:.10em; color:rgba(216,223,230,.50); margin-top:3px}
+  #issStats .tag .ok{color:#7adba0}
+  #issStats .tag .bad{color:#ff8a8a}
+  /* Pip indicator showing which of the 4 panels is active. */
+  #issStats .pips{position:absolute; right:10px; top:8px; display:flex; gap:4px}
+  #issStats .pip{width:5px; height:5px; border-radius:50%; background:rgba(255,255,255,.18)}
+  #issStats .pip.on{background:#fff}
+
+  /* Split-screen quadrant labels — clean, white, small. */
+  #issLabels{display:none; position:absolute; inset:0; pointer-events:none; z-index:6}
+  body.iss-mode.split2 #issLabels,
+  body.iss-mode.split4 #issLabels{display:block}
+  #issLabels .lbl{position:absolute; padding:3px 9px; background:rgba(8,10,14,.62); border:1px solid rgba(255,255,255,.14); color:#fff; font-family:'Open Sans','Helvetica Neue',Inter,system-ui,sans-serif; font-size:10px; font-weight:700; letter-spacing:.16em; text-transform:uppercase}
+  body.iss-mode.split2 #issLabels .lbl-tl{left:12px; top:12px}
+  body.iss-mode.split2 #issLabels .lbl-br{left:12px; top:calc(50% + 12px)}
+  body.iss-mode.split2 #issLabels .lbl-tr,
+  body.iss-mode.split2 #issLabels .lbl-bl{display:none}
+  body.iss-mode.split4 #issLabels .lbl-tl{left:12px; top:12px}
+  body.iss-mode.split4 #issLabels .lbl-tr{right:12px; top:12px}
+  body.iss-mode.split4 #issLabels .lbl-bl{left:12px; top:calc(50% + 12px)}
+  body.iss-mode.split4 #issLabels .lbl-br{right:12px; top:calc(50% + 12px)}
+  /* Subtle viewport dividers — same color as NASA's chrome (white-20). */
+  body.iss-mode.split2::after{content:""; position:absolute; left:0; right:0; top:50%; height:1px; background:rgba(255,255,255,.16); pointer-events:none; z-index:5}
+  body.iss-mode.split4::after{content:""; position:absolute; inset:0; background:linear-gradient(to right, transparent 49.95%, rgba(255,255,255,.16) 50%, transparent 50.05%), linear-gradient(to bottom, transparent 49.95%, rgba(255,255,255,.16) 50%, transparent 50.05%); pointer-events:none; z-index:5}
+
   /* Pause menu mode toggle */
   .modeToggle{display:flex;gap:8px;margin:8px 0 14px}
   .modeBtn{flex:1;padding:10px 14px;border:1.5px solid rgba(140,200,255,.4);background:rgba(8,16,28,.7);color:#d7e4f0;font-size:12px;letter-spacing:.14em;font-weight:700;cursor:pointer;border-radius:4px}
@@ -118,6 +258,70 @@
   <div class="row"><span>RCS</span><b id="rcsText">OFF</b></div>
 </div>
 <div id="notice">Click to capture view. Aim at chair or cockpit buttons and press E.</div>
+<!-- ISS-mode broadcast strip (hidden unless body.iss-mode). NASA-livestream
+     layout: flat world map | place name + flag + LIVE badge | telemetry stats. -->
+<div id="issStrip">
+  <div id="issMapWrap">
+    <span class="mapLabel">Ground Track</span>
+    <img id="issMapImg" src="./assets/earth_8k.jpg" alt="">
+    <canvas id="issMapCanvas" width="520" height="260"></canvas>
+  </div>
+  <div id="issPlaceName">Acquiring orbit…</div>
+  <div id="issPlaceBody">
+    <div id="issFlagBlock">
+      <div id="issFlagSlot">
+        <img id="issFlag" alt="" onerror="this.classList.remove('on')" onload="this.classList.add('on')">
+        <div id="issOceanLabel">Open Ocean</div>
+      </div>
+      <div class="livebadge"><span class="dot"></span>LIVE NOW</div>
+    </div>
+    <div id="issStats">
+    <div class="pips">
+      <span class="pip" data-pip="0"></span><span class="pip" data-pip="1"></span>
+      <span class="pip" data-pip="2"></span><span class="pip" data-pip="3"></span>
+    </div>
+    <!-- Panel 0: ISS sunset countdown (computed locally). -->
+    <div class="panel" data-panel="0">
+      <div class="big" id="issSunsetTitle">Sunset #— in — min</div>
+      <div class="sml" id="issSunsetWhen">—</div>
+      <div class="sml" id="issSunsetTel1">—</div>
+      <div class="sml" id="issSunsetTel2">—</div>
+      <div class="tag">TLE: <span id="issTleAge">—</span></div>
+    </div>
+    <!-- Panel 1: Country Information — Demographics (World Bank). -->
+    <div class="panel" data-panel="1">
+      <div class="head">Country Information</div>
+      <div class="row"><span>Life Expectancy</span><b id="issLifeAll">—</b></div>
+      <div class="row"><span>Male</span><b id="issLifeM">—</b></div>
+      <div class="row"><span>Female</span><b id="issLifeF">—</b></div>
+      <div class="row"><span>Median Age</span><b id="issMedAge">—</b></div>
+    </div>
+    <!-- Panel 2: Country Information — Economy & Capital. -->
+    <div class="panel" data-panel="2">
+      <div class="head">Country Information</div>
+      <div class="row"><span>Pop. in Poverty</span><b id="issPov">—</b></div>
+      <div class="row"><span>Density</span><b id="issDens">—</b></div>
+      <div class="row"><span>Capital</span><b id="issCap">—</b></div>
+      <div class="row"><span>Region</span><b id="issRegion">—</b></div>
+    </div>
+    <!-- Panel 3: Mission Telemetry — 5 rows fit cleanly in the 124px card. -->
+    <div class="panel" data-panel="3">
+      <div class="head">Mission Telemetry</div>
+      <div class="row"><span>UTC</span><b id="issUtc">—</b></div>
+      <div class="row"><span>Altitude</span><b id="issAlt">—</b></div>
+      <div class="row"><span>Speed</span><b id="issGspd">—</b></div>
+      <div class="row"><span>Orbit</span><b>92.6 min · 51.64°</b></div>
+      <div class="row"><span>Sun Elevation</span><b id="issSun">—</b></div>
+    </div>
+  </div>
+  </div>
+</div>
+<div id="issLabels">
+  <div class="lbl lbl-tl">Limb · Off-Nadir</div>
+  <div class="lbl lbl-tr">Forward · Ram</div>
+  <div class="lbl lbl-bl">Nadir · Ground</div>
+  <div class="lbl lbl-br">Trailing · Chase</div>
+</div>
 <div id="obsTime">TIME ×1</div>
 <div id="fpsChip" style="display:none;position:absolute;left:14px;bottom:14px;padding:4px 9px;font-family:monospace;font-size:11px;letter-spacing:.14em;color:rgba(180,210,240,.85);background:rgba(2,6,14,.55);border:1px solid rgba(140,200,255,.22);border-radius:3px;pointer-events:none;z-index:6">FPS —</div>
 <div id="cross"></div>
@@ -237,6 +441,9 @@ import { EffectComposer }    from './vendor/postprocessing/EffectComposer.js';
 import { RenderPass }        from './vendor/postprocessing/RenderPass.js';
 import { ShaderPass }        from './vendor/postprocessing/ShaderPass.js';
 import { UnrealBloomPass }   from './vendor/postprocessing/UnrealBloomPass.js';
+// ISS mode only. Bundle pulled in always (24KB gzipped, parallel with three.js)
+// but only exercised when ?iss=1 is in the URL.
+import * as satellite from './vendor/satellite.es.min.js';
 
 'use strict';
 
@@ -351,7 +558,10 @@ const state = {
   focusDistance: 1e7,       // metres — used when focusMode === 'manual'
   aperture: 0.5,            // [0, 1] — DOF strength
   // Cached realDt for handlers (updateCamera, exposure) that run alongside frame().
-  realDt: 0.016
+  realDt: 0.016,
+  // ISS-mode flag. Set true only when URL contains ?iss=1. Drives every guard
+  // in the frame loop so non-ISS rendering paths are untouched.
+  issMode: false
 };
 
 // Free-flight observer — UFO-like camera body in world frame.
@@ -467,6 +677,962 @@ initShipState();
 bindEvents();
 loadCommandPod();
 initPostFX();
+
+// ============================================================================
+// ISS MODE (?iss=1) — strictly additive, no-op when disabled.
+//
+// Purpose: lock the camera to the real-time ISS orbit, pin Earth rotation to
+// real-world GMST (so the day/night terminator and sub-solar point match
+// reality at the current instant), and optionally render multiple simultaneous
+// viewpoints split-screen.
+//
+// Inputs:  live ISS TLE from CelesTrak (refreshed every 6h) with an embedded
+//          recent fallback for CORS/offline. SGP4 propagation via satellite.js.
+// Outputs: every frame, when state.issMode is true, this code overrides
+//          observer.worldPos, ship.pos, spaceCamera (pos + quat + aspect),
+//          bodies.sun.pos, bodies.earth.pos, and groups.earth.rotation.y.
+//          NONE of this runs when state.issMode is false.
+//
+// Coords:  satellite.js returns ECI-TEME km. We map ECI→scene (Y-up RH) via
+//          scene.x = eci.x ; scene.y = eci.z (polar axis up) ; scene.z = -eci.y.
+//
+// Hotkeys (iss mode only): V cycles view (LIMB/FORWARD/NADIR/TRAILING),
+//                          G cycles split layout (1 / 2-up / 4-up).
+// URL params:              ?iss=1 [&split=2|4] [&view=LIMB|FORWARD|NADIR|TRAILING]
+// ============================================================================
+const iss = {
+  enabled: false,
+  satrec: null,
+  tleFetchedMs: 0,
+  tleSource: 'fallback',                  // 'live' | 'fallback'
+  splitMode: 0,                           // 0 = single, 1 = 2-up, 2 = 4-up
+  viewIndex: 0,                           // index into iss.views (single-view mode)
+  views: ['LIMB','FORWARD','NADIR','TRAILING'],
+  // Embedded fallback TLE — superseded by live fetch within ~1s of page load
+  // on a healthy network. Refreshed offline-resilient.
+  fallbackTLE: [
+    'ISS (ZARYA)',
+    '1 25544U 98067A   26138.58495795  .00002219  00000+0  48053-4 0  9999',
+    '2 25544  51.6322  86.6415 0007482  72.9545 287.2262 15.49259565567169'
+  ],
+  // Reusable buffers — never allocated inside the frame loop.
+  _scenePos: new THREE.Vector3(),
+  _sceneVel: new THREE.Vector3(),
+  _camPos: new THREE.Vector3(),
+  _sunDir: new THREE.Vector3(),
+  _tmpV: new THREE.Vector3(),
+  _tmpM: new THREE.Matrix4()
+};
+
+function issDetect(){
+  try {
+    const p = new URLSearchParams(window.location.search);
+    return p.get('iss') === '1' || p.has('iss');
+  } catch { return false; }
+}
+
+if (issDetect()) {
+  state.issMode = true;
+  document.body.classList.add('iss-mode');
+  issInit();
+}
+
+function issInit(){
+  iss.enabled = true;
+  iss.satrec = satellite.twoline2satrec(iss.fallbackTLE[1], iss.fallbackTLE[2]);
+  iss.tleSource = 'fallback';
+  iss.tleFetchedMs = Date.now();
+  observer.lockTarget = null;             // ISS drives the camera, not lock-on
+  state.controlsEnabled = true;           // skip the click-to-capture boot screen
+  state.pointerLocked = false;
+
+  // Optional URL configuration.
+  const p = new URLSearchParams(window.location.search);
+  const sp = parseInt(p.get('split') || '0', 10);
+  if (sp === 2) { iss.splitMode = 1; document.body.classList.add('split2'); }
+  else if (sp === 4) { iss.splitMode = 2; document.body.classList.add('split4'); }
+  const v = (p.get('view') || '').toUpperCase();
+  const vi = iss.views.indexOf(v);
+  if (vi >= 0) iss.viewIndex = vi;
+
+  // Hotkeys.
+  document.addEventListener('keydown', (e) => {
+    if (!state.issMode) return;
+    if (e.code === 'KeyV') {
+      iss.viewIndex = (iss.viewIndex + 1) % iss.views.length;
+      e.preventDefault();
+    } else if (e.code === 'KeyG') {
+      iss.splitMode = (iss.splitMode + 1) % 3;
+      document.body.classList.toggle('split2', iss.splitMode === 1);
+      document.body.classList.toggle('split4', iss.splitMode === 2);
+      // composer must be resized when leaving multi-panel mode.
+      if (iss.splitMode === 0) {
+        post.composer.setSize(innerWidth, innerHeight);
+        renderer.setViewport(0, 0, innerWidth, innerHeight);
+        renderer.setScissorTest(false);
+      }
+      e.preventDefault();
+    }
+  });
+
+  // Live TLE refresh — fire and forget, retry every 6h.
+  issRefreshTLE();
+  setInterval(issRefreshTLE, 6 * 3600 * 1000);
+  // Kick off the right-panel cycler.
+  issStartCycler();
+}
+
+async function issRefreshTLE(){
+  try {
+    const r = await fetch('https://celestrak.org/NORAD/elements/gp.php?CATNR=25544&FORMAT=TLE', {cache: 'no-store'});
+    if (!r.ok) return;
+    const txt = await r.text();
+    const lines = txt.trim().split(/\r?\n/);
+    if (lines.length < 3) return;
+    const sat = satellite.twoline2satrec(lines[1].trim(), lines[2].trim());
+    if (sat && !sat.error) {
+      iss.satrec = sat;
+      iss.tleSource = 'live';
+      iss.tleFetchedMs = Date.now();
+    }
+  } catch { /* offline / CORS — keep fallback */ }
+}
+
+// Propagate ISS state in scene-meters at the given Date. Writes into outPos
+// and outVel. Returns false if SGP4 propagation fails (decayed / bad data).
+function issPropagate(date, outPos, outVel){
+  if (!iss.satrec) return false;
+  const pv = satellite.propagate(iss.satrec, date);
+  if (!pv || !pv.position) return false;
+  const p = pv.position, v = pv.velocity;        // km, km/s in ECI(TEME)
+  outPos.set(p.x * 1000, p.z * 1000, -p.y * 1000);
+  outVel.set(v.x * 1000, v.z * 1000, -v.y * 1000);
+  return true;
+}
+
+// Real-Sun direction in scene frame for a given Date. Low-precision ecliptic
+// model — accurate to ~0.01°, far more than the Earth shader needs.
+function issSunDirScene(date, out){
+  const J2000 = Date.UTC(2000, 0, 1, 12, 0, 0);
+  const n = (date.getTime() - J2000) / 86400000;
+  const D2R = Math.PI / 180;
+  const L = (280.460 + 0.9856474 * n) * D2R;
+  const g = (357.528 + 0.9856003 * n) * D2R;
+  const lam = L + (1.915 * Math.sin(g) + 0.020 * Math.sin(2*g)) * D2R;
+  const eps = (23.439 - 0.0000004 * n) * D2R;
+  const ex = Math.cos(lam);
+  const ey = Math.cos(eps) * Math.sin(lam);
+  const ez = Math.sin(eps) * Math.sin(lam);
+  out.set(ex, ez, -ey).normalize();
+  return out;
+}
+
+// Pre-step ISS bookkeeping: set bodies.earth to origin, bodies.sun to real
+// direction × AU, so all existing shader sun-direction code "just works."
+function issPreStep(){
+  bodies.earth.pos.set(0, 0, 0);
+  bodies.earth.vel.set(0, 0, 0);
+  const now = new Date();
+  issSunDirScene(now, iss._sunDir);
+  bodies.sun.pos.copy(iss._sunDir).multiplyScalar(AU);
+  bodies.sun.vel.set(0, 0, 0);
+  // Hide Moon behind the Sun so it never appears in the ISS-altitude frame.
+  bodies.moon.pos.copy(iss._sunDir).multiplyScalar(1.2 * AU);
+  bodies.moon.vel.set(0, 0, 0);
+  // Pin observer + ship to the ISS scene position. Final camera quaternion is
+  // set inside issAimCamera AFTER updateSpaceObjects runs.
+  if (issPropagate(now, iss._scenePos, iss._sceneVel)) {
+    observer.worldPos.copy(iss._scenePos);
+    ship.pos.copy(iss._scenePos);
+    ship.vel.copy(iss._sceneVel);
+  }
+}
+
+// Aim the spaceCamera for a given view name. Called per-frame (single view)
+// or per-panel (split-screen). Sets camera pos at origin (scene is ship-
+// centric — Earth was placed relative to ship.pos in updateSpaceObjects).
+function issAimCamera(viewName){
+  // Direction vectors in the camera's *parent* (world) frame, where ISS is at
+  // iss._scenePos and Earth is at origin.
+  const radial = iss._tmpV.copy(iss._scenePos).normalize();        // Earth → ISS, "up"
+  const nadir  = radial.clone().multiplyScalar(-1);                // ISS → Earth, "down"
+  const velDir = iss._sceneVel.clone().normalize();                // raw ram
+  const side   = new THREE.Vector3().crossVectors(nadir, velDir).normalize();
+  const ram    = new THREE.Vector3().crossVectors(side, nadir).normalize(); // clean ram ⟂ nadir
+
+  let look, up;
+  const D = Math.PI / 180;
+  switch (viewName) {
+    case 'NADIR':
+      look = nadir.clone();
+      up = ram.clone();
+      break;
+    case 'FORWARD':
+      look = ram.clone().multiplyScalar(Math.cos(10*D))
+        .addScaledVector(nadir, Math.sin(10*D)).normalize();
+      up = radial.clone();
+      break;
+    case 'TRAILING':
+      look = ram.clone().multiplyScalar(-Math.cos(25*D))
+        .addScaledVector(nadir, Math.sin(25*D)).normalize();
+      up = radial.clone();
+      break;
+    case 'LIMB':
+    default:
+      look = nadir.clone().multiplyScalar(Math.cos(30*D))
+        .addScaledVector(ram, Math.sin(30*D)).normalize();
+      up = radial.clone();
+      break;
+  }
+  // Three.js Matrix4.lookAt(eye, target, up) builds a rotation matrix whose
+  // -Z axis points FROM eye TOWARD target. We want -Z to be the look direction
+  // so the camera faces `look`. eye=origin, target=look ⇒ -Z = look. ✓
+  iss._tmpM.lookAt(
+    new THREE.Vector3(0,0,0),
+    look,
+    up
+  );
+  spaceCamera.quaternion.setFromRotationMatrix(iss._tmpM);
+  spaceCamera.position.set(0, 0, 0);
+  // FOV: 70° vertical → ~108° horizontal at 16:9. Wide and panoramic like the
+  // Cupola windows / ISS exterior wide cameras. Going wider starts showing
+  // edge distortion under bloom + lens flare, so 70 is the sweet spot.
+  spaceCamera.fov = 70;
+}
+
+// Single-or-split frame render. Replaces the bare `post.composer.render()`
+// when state.issMode is true.
+function issRenderFrame(){
+  if (iss.splitMode === 0) {
+    issAimCamera(iss.views[iss.viewIndex]);
+    spaceCamera.aspect = innerWidth / innerHeight;
+    spaceCamera.updateProjectionMatrix();
+    post.composer.setSize(innerWidth, innerHeight);
+    renderer.setScissorTest(false);
+    renderer.setViewport(0, 0, innerWidth, innerHeight);
+    post.composer.render();
+    return;
+  }
+  const w = innerWidth, h = innerHeight;
+  // WebGL viewport origin is bottom-left.
+  const panels = iss.splitMode === 1
+    ? [['LIMB',  0, h/2, w, h/2],
+       ['NADIR', 0, 0,   w, h/2]]
+    : [['LIMB',     0,   h/2, w/2, h/2],
+       ['FORWARD', w/2,  h/2, w/2, h/2],
+       ['NADIR',    0,   0,   w/2, h/2],
+       ['TRAILING',w/2,  0,   w/2, h/2]];
+  for (let i = 0; i < panels.length; i++) {
+    const [view, x, y, pw, ph] = panels[i];
+    issAimCamera(view);
+    spaceCamera.aspect = pw / ph;
+    spaceCamera.updateProjectionMatrix();
+    post.composer.setSize(pw, ph);
+    renderer.setViewport(x, y, pw, ph);
+    renderer.setScissor(x, y, pw, ph);
+    renderer.setScissorTest(true);
+    post.composer.render();
+  }
+  renderer.setScissorTest(false);
+}
+
+// Country lookup table — lat/lon bounding boxes for everything ISS flies over.
+// Order: most-specific (smallest area) FIRST so they match before larger
+// neighbors. Format: [lat_min, lat_max, lon_min, lon_max, ISO_alpha2, NAME].
+// Flag PNGs fetched on demand from flagcdn.com (CC0). Not a complete atlas —
+// just enough to make the broadcast read as legit for any pass.
+const ISS_COUNTRIES = [
+  // Europe
+  [50.0, 60.9, -8.7,   1.8,  'gb', 'United Kingdom'],
+  [49.5, 51.5,  2.5,   6.4,  'be', 'Belgium'],
+  [50.7, 53.7,  3.3,   7.2,  'nl', 'Netherlands'],
+  [47.3, 55.1,  6.0,  15.0,  'de', 'Germany'],
+  [42.3, 51.1, -5.1,   8.2,  'fr', 'France'],
+  [36.0, 43.8, -9.5,   3.3,  'es', 'Spain'],
+  [36.9, 47.1,  6.6,  18.5,  'it', 'Italy'],
+  [38.7, 42.2, -9.5,  -6.2,  'pt', 'Portugal'],
+  [45.4, 49.0,  9.5,  17.2,  'at', 'Austria'],
+  [45.4, 49.6, 16.8,  22.6,  'hu', 'Hungary'],
+  [48.5, 51.1, 12.0,  18.9,  'cz', 'Czechia'],
+  [49.0, 54.8, 14.1,  24.2,  'pl', 'Poland'],
+  [44.6, 48.3, 22.3,  29.7,  'ro', 'Romania'],
+  [41.2, 44.3, 22.4,  28.6,  'bg', 'Bulgaria'],
+  [34.8, 41.7, 19.4,  29.6,  'gr', 'Greece'],
+  [36.0, 42.0, 25.7,  44.8,  'tr', 'Türkiye'],
+  [40.4, 70.0, 28.0, 180.0,  'ru', 'Russia'],
+  [44.4, 52.4, 22.1,  40.2,  'ua', 'Ukraine'],
+  // Middle East / Asia
+  [29.3, 33.4, 34.3,  35.9,  'il', 'Israel'],
+  [29.0, 33.4, 38.0,  48.6,  'iq', 'Iraq'],
+  [25.0, 39.8, 44.0,  63.3,  'ir', 'Iran'],
+  [12.6, 32.2, 34.5,  55.7,  'sa', 'Saudi Arabia'],
+  [22.6, 26.4, 51.4,  56.4,  'ae', 'UAE'],
+  [23.6, 37.1, 60.5,  75.2,  'af', 'Afghanistan'],
+  [23.6, 37.1, 60.9,  77.0,  'pk', 'Pakistan'],
+  [6.7,  35.7, 68.2,  97.4,  'in', 'India'],
+  [26.3, 30.5, 80.0,  88.2,  'np', 'Nepal'],
+  [20.6, 26.6, 88.0,  92.7,  'bd', 'Bangladesh'],
+  [9.9,  28.5, 92.2, 101.2,  'mm', 'Myanmar'],
+  [5.6,  20.5, 97.4, 105.6,  'th', 'Thailand'],
+  [10.4, 23.4, 102.1,109.5,  'vn', 'Vietnam'],
+  [-10.9, 6.1, 95.0, 141.0,  'id', 'Indonesia'],
+  [4.6,  21.1,116.9, 126.6,  'ph', 'Philippines'],
+  [0.9,  7.4, 99.6, 119.3,   'my', 'Malaysia'],
+  [18.2, 53.6, 73.6, 134.8,  'cn', 'China'],
+  [33.1, 38.6,124.6, 130.9,  'kr', 'South Korea'],
+  [24.0, 45.6,122.9, 145.8,  'jp', 'Japan'],
+  [-44.4,-9.1,112.9, 153.6,  'au', 'Australia'],
+  [-47.3,-34.3,166.4,178.6,  'nz', 'New Zealand'],
+  // Africa
+  [22.0, 31.7, 25.0,  36.9,  'eg', 'Egypt'],
+  [10.0, 22.0, 24.0,  39.0,  'sd', 'Sudan'],
+  [3.4,  15.1, 33.0,  47.9,  'et', 'Ethiopia'],
+  [-4.7, 5.5,  33.9,  41.9,  'ke', 'Kenya'],
+  [-11.7,-0.9, 29.3,  40.4,  'tz', 'Tanzania'],
+  [21.4, 37.1, -8.6,  11.9,  'dz', 'Algeria'],
+  [27.7, 36.0, -13.2, -0.9,  'ma', 'Morocco'],
+  [30.2, 37.5,  7.5,  11.6,  'tn', 'Tunisia'],
+  [19.5, 33.2,  9.4,  25.0,  'ly', 'Libya'],
+  [12.4, 23.5, -5.5,   2.4,  'ml', 'Mali'],
+  [11.7, 15.7,-17.1, -11.4,  'sn', 'Senegal'],
+  [6.9,  10.0,-13.2,  -7.9,  'sl', 'Sierra Leone'],
+  [3.1,  11.3,  -3.3,   1.2, 'gh', 'Ghana'],
+  [4.0,  14.0,   2.7,  14.7, 'ng', 'Nigeria'],
+  [-13.5,5.4,   12.0,  31.3, 'cd', 'DR Congo'],
+  [-17.1,-22.0, 11.6,  25.3, 'na', 'Namibia'],
+  [-34.8,-22.1, 16.5,  32.9, 'za', 'South Africa'],
+  // Americas
+  [60.0, 71.6,-141.0, -52.6, 'ca', 'Canada'],   // (Yukon/NWT/Nunavut south band)
+  [41.7, 60.0,-141.0, -52.6, 'ca', 'Canada'],
+  [24.5, 49.4,-125.0, -66.9, 'us', 'United States'],
+  [54.0, 71.4,-168.0,-129.0, 'us', 'United States'],
+  [14.5, 32.7,-118.4, -86.7, 'mx', 'Mexico'],
+  [13.7, 18.5, -92.2, -88.2, 'gt', 'Guatemala'],
+  [12.9, 15.5, -89.4, -82.5, 'hn', 'Honduras'],
+  [10.7, 15.0, -85.6, -82.8, 'ni', 'Nicaragua'],
+  [8.0,  11.2, -85.9, -82.5, 'cr', 'Costa Rica'],
+  [7.2,   9.7, -83.0, -77.2, 'pa', 'Panama'],
+  [17.7, 23.2, -85.0, -74.1, 'cu', 'Cuba'],
+  [10.7, 12.6, -85.0, -59.5, 'tt', 'Caribbean'],
+  [0.6,  12.5, -73.4, -66.8, 'co', 'Colombia'],
+  [0.7,  12.2, -73.4, -59.8, 'co', 'Colombia'],
+  [-4.5, 1.5,  -81.0, -75.2, 'ec', 'Ecuador'],
+  [0.7,  12.5, -73.4, -59.8, 've', 'Venezuela'],
+  [-18.4, 0.0, -81.4, -68.7, 'pe', 'Peru'],
+  [-22.9,-9.7, -69.7, -57.5, 'bo', 'Bolivia'],
+  [-30.5,-19.3,-62.6, -53.6, 'py', 'Paraguay'],
+  [-35.0,-30.0,-58.5, -53.0, 'uy', 'Uruguay'],
+  [-55.1,-21.8,-73.6, -66.4, 'cl', 'Chile'],
+  [-55.1,-21.8,-73.5, -53.6, 'ar', 'Argentina'],
+  [-33.8, 5.4, -73.9, -34.7, 'br', 'Brazil'],
+  // Polar belts (informational; ISS only reaches ±51.6°).
+  [60.0, 90.0, -180.0, 180.0, '__', 'Arctic Circle'],
+  [-90.0,-60.0, -180.0, 180.0,'__', 'Southern Ocean'],
+];
+
+// Sea / ocean fallback — granular bounding boxes for every named body of
+// water the ISS overflies. Order matters: specific seas BEFORE big oceans
+// so the lookup picks the most descriptive label. ISS inclination ±51.6°.
+const ISS_SEAS = [
+  // Mediterranean basin
+  [ 30,  46,  -6,  36, 'Mediterranean Sea'],
+  [ 36,  41,  -6,  -1, 'Alboran Sea'],
+  [ 40,  44,   3,  10, 'Ligurian Sea'],
+  [ 38,  45,   8,  18, 'Tyrrhenian Sea'],
+  [ 35,  46,  12,  20, 'Adriatic Sea'],
+  [ 35,  40,  18,  26, 'Ionian Sea'],
+  [ 33,  42,  22,  30, 'Aegean Sea'],
+  [ 40,  47,  27,  42, 'Black Sea'],
+  [ 36,  47,  47,  55, 'Caspian Sea'],
+  // Atlantic-adjacent
+  [ 51,  60,  -4,   9, 'North Sea'],
+  [ 53,  60,  10,  30, 'Baltic Sea'],
+  [ 35,  51,  -9,   1, 'Bay of Biscay'],
+  [ 18,  31, -98, -80, 'Gulf of Mexico'],
+  [  8,  25, -87, -60, 'Caribbean Sea'],
+  [  0,  10, -80, -77, 'Gulf of Panama'],
+  // Indian Ocean / Arabian / Red
+  [ 12,  30,  32,  44, 'Red Sea'],
+  [ 24,  30,  48,  57, 'Persian Gulf'],
+  [  5,  25,  50,  78, 'Arabian Sea'],
+  [  5,  22,  78, 100, 'Bay of Bengal'],
+  [-26, -10,  39,  52, 'Mozambique Channel'],
+  // Western Pacific
+  [  0,  25, 100, 122, 'South China Sea'],
+  [ 22,  41, 117, 131, 'East China Sea'],
+  [ 33,  46, 127, 142, 'Sea of Japan'],
+  [ 50,  61, 138, 165, 'Sea of Okhotsk'],
+  [  5,  30, 120, 140, 'Philippine Sea'],
+  // Southwest Pacific
+  [-25,  -8, 140, 165, 'Coral Sea'],
+  [-46, -25, 145, 175, 'Tasman Sea'],
+  [-12,  -8, 130, 145, 'Arafura Sea'],
+  // Hemisphere-labeled oceans (broad fallbacks, checked LAST).
+  [  0,  60, -180,-100, 'North Pacific Ocean'],
+  [  0,  60,  140, 180, 'North Pacific Ocean'],
+  [-60,   0, -180,-100, 'South Pacific Ocean'],
+  [-60,   0,  140, 180, 'South Pacific Ocean'],
+  [  0,  60, -100, -10, 'North Atlantic Ocean'],
+  [-60,   0,  -70,  20, 'South Atlantic Ocean'],
+  [-60,   0,   20, 140, 'Indian Ocean'],
+  [  0,  30,   20,  78, 'Indian Ocean'],
+];
+// Polar caps — labeled but no country.
+const ISS_POLAR = [
+  [ 60,  90, -180, 180, 'Arctic Ocean'],
+  [-90, -60, -180, 180, 'Southern Ocean'],
+];
+// Back-compat alias for older references in this file.
+const ISS_OCEANS = ISS_SEAS.concat(ISS_POLAR);
+
+// Synchronous local fallback — used only if the BigDataCloud reverse-geocode
+// API is unreachable. Coarse bbox dataset above is good enough for "we know
+// roughly what landmass we're over."
+function issLookupPlaceFallback(lat, lon){
+  for (let i = 0; i < ISS_COUNTRIES.length; i++) {
+    const c = ISS_COUNTRIES[i];
+    if (lat >= c[0] && lat <= c[1] && lon >= c[2] && lon <= c[3]) {
+      return { iso: c[4], name: c[5], isCountry: c[4] !== '__', city: null };
+    }
+  }
+  for (let i = 0; i < ISS_OCEANS.length; i++) {
+    const o = ISS_OCEANS[i];
+    if (lat >= o[0] && lat <= o[1] && lon >= o[2] && lon <= o[3]) {
+      return { iso: null, name: o[4], isCountry: false, city: null };
+    }
+  }
+  return { iso: null, name: 'OPEN OCEAN', isCountry: false, city: null };
+}
+
+// Authoritative reverse-geocode via BigDataCloud's no-key client endpoint
+// (CC-licensed for client-side use, ~10,000 req/day free). Results cached
+// per ~0.5° lat/lon grid cell; lookup is throttled to 1 call per 4 seconds
+// even when crossing grid cells to stay polite under load.
+const _issGeoCache = Object.create(null);
+let _issGeoInflight = false;
+let _issGeoLastCallMs = 0;
+let _issGeoLast = null;   // last fully-resolved place object
+function _geoKey(lat, lon){
+  return Math.round(lat * 2) / 2 + ',' + Math.round(lon * 2) / 2;
+}
+async function issReverseGeocode(lat, lon){
+  const key = _geoKey(lat, lon);
+  if (_issGeoCache[key]) return _issGeoCache[key];
+  if (_issGeoInflight) return null;
+  const t = performance.now();
+  if (t - _issGeoLastCallMs < 4000) return null;
+  _issGeoLastCallMs = t;
+  _issGeoInflight = true;
+  try {
+    const url = 'https://api.bigdatacloud.net/data/reverse-geocode-client'
+      + '?latitude=' + lat.toFixed(4)
+      + '&longitude=' + lon.toFixed(4)
+      + '&localityLanguage=en';
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('http ' + r.status);
+    const j = await r.json();
+    const iso = j.countryCode ? j.countryCode.toLowerCase() : null;
+    // BigDataCloud returns empty country fields when over ocean. Detect that
+    // case explicitly so we can label it as ocean rather than mis-rendering.
+    const isLand = !!(iso && j.countryName);
+    let placeName = j.countryName || '';
+    // Prefer a city-level locality if available; otherwise the principal
+    // subdivision (state/region). Falls back to country alone.
+    const locality = j.city || j.locality || j.localityInfo?.administrative?.[3]?.name
+      || j.localityInfo?.administrative?.[2]?.name || null;
+    if (isLand && locality && locality !== j.countryName) {
+      placeName = locality + ', ' + j.countryName;
+    } else if (isLand) {
+      placeName = j.countryName;
+    } else {
+      // Over ocean — use bbox fallback to label which ocean.
+      const fb = issLookupPlaceFallback(lat, lon);
+      placeName = fb.name;
+    }
+    const place = {
+      iso: isLand ? iso : null,
+      name: placeName.toUpperCase ? placeName : String(placeName),
+      isCountry: isLand,
+      city: isLand ? locality : null,
+      countryName: j.countryName || null,
+      principalSubdivision: j.principalSubdivision || null
+    };
+    _issGeoCache[key] = place;
+    _issGeoLast = place;
+    return place;
+  } catch (e) {
+    return null;
+  } finally {
+    _issGeoInflight = false;
+  }
+}
+function issLookupPlace(lat, lon){
+  const key = _geoKey(lat, lon);
+  if (_issGeoCache[key]) return _issGeoCache[key];
+  // Kick off async fetch — meanwhile use last-known result or bbox fallback.
+  issReverseGeocode(lat, lon);
+  return _issGeoLast || issLookupPlaceFallback(lat, lon);
+}
+
+// World-map canvas: redraw terminator + ground track + ISS marker. Throttled
+// to 1 Hz inside issUpdateHud.
+let _issGroundTrack = null;
+let _issGroundTrackTimeMs = 0;
+function issComputeGroundTrack(){
+  // Cache an array of {lat, lon} samples covering the next ~90 min in 60s
+  // steps. Recompute every 60s so the trailing track always shows past +
+  // upcoming half-orbit centered on now.
+  if (!iss.satrec) return null;
+  const samples = [];
+  const startMin = -45;
+  const endMin   =  60;
+  const stepSec  =  60;
+  for (let t = startMin*60; t <= endMin*60; t += stepSec) {
+    const d = new Date(Date.now() + t * 1000);
+    const pv = satellite.propagate(iss.satrec, d);
+    if (!pv || !pv.position) continue;
+    const g = satellite.eciToGeodetic(pv.position, satellite.gstime(d));
+    samples.push({
+      lat: satellite.degreesLat(g.latitude),
+      lon: satellite.degreesLong(g.longitude),
+      t: t
+    });
+  }
+  return samples;
+}
+
+function issDrawMap(curLat, curLon, sunLat, sunLon){
+  const cv = document.getElementById('issMapCanvas');
+  if (!cv) return;
+  const W = cv.width, H = cv.height;
+  const ctx = cv.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
+  // 1. Day / night terminator overlay. For each column (longitude), compute
+  //    the terminator latitude (where solar elevation = 0). Shade the
+  //    night-side pixels darker so the lit half pops.
+  ctx.save();
+  ctx.globalAlpha = 0.55;
+  ctx.fillStyle = '#000814';
+  const sunLatR = sunLat * Math.PI / 180;
+  const sunLonR = sunLon * Math.PI / 180;
+  const tanSunLat = Math.tan(sunLatR);
+  // If sunLat near 0 (equinox), terminator is nearly the prime meridian; skip
+  // edge cases gracefully by clamping.
+  for (let x = 0; x < W; x++) {
+    const lon = (x / W) * 360 - 180;
+    const lonR = lon * Math.PI / 180;
+    // tan(lat_term) = -cos(lon - sun_lon) / tan(sun_dec)
+    const c = Math.cos(lonR - sunLonR);
+    let termLat = (Math.abs(tanSunLat) < 1e-4)
+      ? (c > 0 ? -90 : 90)
+      : (Math.atan(-c / tanSunLat) * 180 / Math.PI);
+    // Decide which side (north or south of terminator) is night, depending on
+    // whether the sun is in the northern or southern celestial hemisphere.
+    // North of terminator = day in northern summer (when sunLat > 0)
+    // contribution at this longitude when c > 0 ...
+    // Practical: compute solar elevation at (termLat+1, lon) and (termLat-1, lon),
+    // pick the side with elev < 0.
+    const elevAt = (la) => {
+      const laR = la * Math.PI / 180;
+      return Math.sin(sunLatR) * Math.sin(laR) +
+             Math.cos(sunLatR) * Math.cos(laR) * Math.cos(lonR - sunLonR);
+    };
+    const isNorthDark = elevAt(termLat + 5) < 0;
+    // Shade night side from termLat to ±90.
+    const yTerm = ((90 - termLat) / 180) * H;
+    if (isNorthDark) {
+      ctx.fillRect(x, 0, 1, yTerm);
+    } else {
+      ctx.fillRect(x, yTerm, 1, H - yTerm);
+    }
+  }
+  ctx.restore();
+  // 2. Ground track polyline (past = dim, future = bright).
+  if (_issGroundTrack && _issGroundTrack.length) {
+    const project = (la, lo) => [(lo + 180) / 360 * W, (90 - la) / 180 * H];
+    // Past (t < 0): dim line.
+    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = 'rgba(255,210,90,.55)';
+    ctx.beginPath();
+    let drew = false;
+    for (let i = 0; i < _issGroundTrack.length; i++) {
+      const s = _issGroundTrack[i];
+      if (s.t > 0) break;
+      const [px, py] = project(s.lat, s.lon);
+      if (!drew) { ctx.moveTo(px, py); drew = true; }
+      else {
+        // Wraparound at antimeridian.
+        const prev = _issGroundTrack[i-1];
+        if (Math.abs(s.lon - prev.lon) > 180) {
+          ctx.stroke(); ctx.beginPath(); drew = false;
+          ctx.moveTo(px, py); drew = true;
+        } else {
+          ctx.lineTo(px, py);
+        }
+      }
+    }
+    if (drew) ctx.stroke();
+    // Future (t >= 0): bright line.
+    ctx.lineWidth = 1.6;
+    ctx.strokeStyle = 'rgba(255,210,90,.95)';
+    ctx.beginPath();
+    drew = false;
+    for (let i = 0; i < _issGroundTrack.length; i++) {
+      const s = _issGroundTrack[i];
+      if (s.t < 0) continue;
+      const [px, py] = project(s.lat, s.lon);
+      if (!drew) { ctx.moveTo(px, py); drew = true; }
+      else {
+        const prev = _issGroundTrack[i-1];
+        if (prev && Math.abs(s.lon - prev.lon) > 180) {
+          ctx.stroke(); ctx.beginPath(); drew = false;
+          ctx.moveTo(px, py); drew = true;
+        } else {
+          ctx.lineTo(px, py);
+        }
+      }
+    }
+    if (drew) ctx.stroke();
+  }
+  // 3. Sub-satellite marker.
+  const [mx, my] = [(curLon + 180) / 360 * W, (90 - curLat) / 180 * H];
+  ctx.fillStyle = 'rgba(255,80,80,.9)';
+  ctx.beginPath();
+  ctx.arc(mx, my, 6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = '#fff';
+  ctx.beginPath();
+  ctx.arc(mx, my, 6, 0, Math.PI * 2);
+  ctx.stroke();
+  // Crosshair for clarity.
+  ctx.strokeStyle = 'rgba(255,255,255,.3)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(mx - 14, my); ctx.lineTo(mx - 8, my);
+  ctx.moveTo(mx + 8, my);  ctx.lineTo(mx + 14, my);
+  ctx.moveTo(mx, my - 14); ctx.lineTo(mx, my - 8);
+  ctx.moveTo(mx, my + 8);  ctx.lineTo(mx, my + 14);
+  ctx.stroke();
+}
+
+// Telemetry HUD update — throttled to 4 Hz to avoid string thrash.
+let _issHudLast = 0;
+let _issLastIso = '';
+function issUpdateHud(){
+  const now_ms = performance.now();
+  if (now_ms - _issHudLast < 250) return;
+  _issHudLast = now_ms;
+  if (!iss.satrec) return;
+  const now = new Date();
+  const pv = satellite.propagate(iss.satrec, now);
+  if (!pv || !pv.position) return;
+  const gmst = satellite.gstime(now);
+  const geo = satellite.eciToGeodetic(pv.position, gmst);
+  const lat = satellite.degreesLat(geo.latitude);
+  const lon = satellite.degreesLong(geo.longitude);
+  const altKm = geo.height;
+  const v = pv.velocity;
+  const vMag = Math.sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
+  // Solar position — geographic sub-solar lat/lon (for terminator + elev calc).
+  issSunDirScene(now, iss._sunDir);
+  const sx_eci =  iss._sunDir.x;
+  const sy_eci = -iss._sunDir.z;
+  const sz_eci =  iss._sunDir.y;
+  const cg = Math.cos(-gmst), sg = Math.sin(-gmst);
+  const sxE = sx_eci*cg - sy_eci*sg;
+  const syE = sx_eci*sg + sy_eci*cg;
+  const szE = sz_eci;
+  const sunSubLat = Math.asin(szE) * 180 / Math.PI;
+  const sunSubLon = Math.atan2(syE, sxE) * 180 / Math.PI;
+  // Solar elevation at sub-satellite point.
+  const cosLat = Math.cos(geo.latitude), sinLat = Math.sin(geo.latitude);
+  const cosLon = Math.cos(geo.longitude), sinLon = Math.sin(geo.longitude);
+  const upX = cosLat * cosLon, upY = cosLat * sinLon, upZ = sinLat;
+  const sunDot = upX*sxE + upY*syE + upZ*szE;
+  const sunElevDeg = Math.asin(Math.max(-1, Math.min(1, sunDot))) * 180/Math.PI;
+  const isDay = sunElevDeg > -6;
+  const place = issLookupPlace(lat, lon);
+  const $ = (id) => document.getElementById(id);
+  const fmt = (n, d=2) => (n>=0?'+':'') + n.toFixed(d);
+  // Flag image — swap src only on country change. Validates ISO is exactly
+  // 2 letters before constructing the URL; on 404 the inline onerror hook
+  // removes the .on class. When .on is absent, the ocean-label sibling shows
+  // through (sea/ocean name centered in the same 138x92 slot) so the layout
+  // NEVER reflows whether we're over a country or open water.
+  const flagEl = $('issFlag');
+  const oceanEl = $('issOceanLabel');
+  const iso = (place.iso || '').toString().toLowerCase();
+  if (iso.length === 2 && /^[a-z]{2}$/.test(iso) && place.isCountry) {
+    if (iso !== _issLastIso) {
+      _issLastIso = iso;
+      flagEl.classList.remove('on');
+      flagEl.src = 'https://flagcdn.com/w160/' + iso + '.png';
+    }
+  } else {
+    flagEl.classList.remove('on');
+    _issLastIso = '';
+    if (oceanEl) oceanEl.textContent = place.name || 'Open Ocean';
+  }
+  $('issPlaceName').textContent = place.name;
+  // (issPlaceSub removed — lat/lon now appears in the cycling info panel.)
+  $('issUtc').textContent       = now.toISOString().slice(11, 19) + ' UTC';
+  $('issAlt').textContent       = altKm.toFixed(1) + ' km';
+  $('issGspd').textContent      = (vMag * 3600).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g,',') + ' km/h';
+  $('issSun').innerHTML         = (isDay ? 'Daylight ' : 'Night ') + fmt(sunElevDeg, 1) + '°';
+  $('issTleAge').innerHTML      = '<span class="' + (iss.tleSource === 'live' ? 'ok' : 'bad')
+    + '">' + (iss.tleSource === 'live' ? 'LIVE' : 'CACHED') + '</span> · '
+    + _fmtAge(Date.now() - iss.tleFetchedMs);
+  // Map redraw — recompute ground track every 60s, redraw every HUD tick.
+  if (!_issGroundTrack || Date.now() - _issGroundTrackTimeMs > 60000) {
+    _issGroundTrack = issComputeGroundTrack();
+    _issGroundTrackTimeMs = Date.now();
+  }
+  issDrawMap(lat, lon, sunSubLat, sunSubLon);
+
+  // ---- Country data fetch (REST Countries + World Bank). Cached per ISO. ----
+  if (place.iso && place.isCountry && !_issCountryData[place.iso] && !_issCountryFetching[place.iso]) {
+    _issCountryFetching[place.iso] = true;
+    issFetchCountryData(place.iso);
+  }
+  issUpdateCountryPanels(place);
+  issUpdateSunsetPanel(now, lat, lon, altKm, vMag);
+}
+
+// ============================================================================
+// Real-data fetch from REST Countries + World Bank. Per CLAUDE.MD vow, NO
+// fabricated values — if a field isn't available from the API, we leave the
+// field as '—'. Cached forever per session (countries don't change hourly).
+// ============================================================================
+const _issCountryData = Object.create(null);
+const _issCountryFetching = Object.create(null);
+const WB_INDICATORS = {
+  lifeAll: 'SP.DYN.LE00.IN',           // Life expectancy, total
+  lifeM:   'SP.DYN.LE00.MA.IN',        // Life expectancy, male
+  lifeF:   'SP.DYN.LE00.FE.IN',        // Life expectancy, female
+  pov:     'SI.POV.DDAY',              // Poverty headcount $2.15/day (% pop)
+  dens:    'EN.POP.DNST'               // Population density
+};
+async function issFetchCountryData(iso2){
+  const data = { iso: iso2, ready: false, _src: 'pending' };
+  // REST Countries — capital, population, area, region.
+  try {
+    const r = await fetch('https://restcountries.com/v3.1/alpha/' + iso2
+      + '?fields=name,capital,population,area,region,subregion');
+    if (r.ok) {
+      const j = await r.json();
+      const c = Array.isArray(j) ? j[0] : j;
+      data.capital    = (c && c.capital && c.capital[0]) || null;
+      data.population = (c && c.population) || null;
+      data.area       = (c && c.area) || null;
+      data.region     = (c && c.subregion) || (c && c.region) || null;
+      data.officialName = c && c.name && (c.name.common || c.name.official);
+    }
+  } catch {}
+  // World Bank indicators — most-recent value (last ~6 years window).
+  const wbBase = 'https://api.worldbank.org/v2/country/' + iso2 + '/indicator/';
+  const wbSuffix = '?format=json&date=2018:2024&per_page=10';
+  await Promise.all(Object.entries(WB_INDICATORS).map(async ([key, code]) => {
+    try {
+      const r = await fetch(wbBase + code + wbSuffix);
+      if (!r.ok) return;
+      const j = await r.json();
+      const arr = Array.isArray(j) ? j[1] : null;
+      if (!arr) return;
+      // Pick the most recent non-null value.
+      for (let i = 0; i < arr.length; i++) {
+        if (arr[i] && arr[i].value !== null && arr[i].value !== undefined) {
+          data[key] = arr[i].value;
+          data[key + 'Year'] = arr[i].date;
+          break;
+        }
+      }
+    } catch {}
+  }));
+  data.ready = true;
+  data._src = 'worldbank+restcountries';
+  _issCountryData[iso2] = data;
+  _issCountryFetching[iso2] = false;
+}
+
+function _fmtN(v, suffix){
+  if (v === null || v === undefined || Number.isNaN(v)) return '—';
+  return (typeof v === 'number' ? v.toFixed(1) : String(v)) + (suffix || '');
+}
+function _fmtBigInt(v){
+  if (v === null || v === undefined) return '—';
+  if (v >= 1e9) return (v/1e9).toFixed(2) + 'B';
+  if (v >= 1e6) return (v/1e6).toFixed(1) + 'M';
+  if (v >= 1e3) return (v/1e3).toFixed(0) + 'K';
+  return String(v);
+}
+
+function issUpdateCountryPanels(place){
+  const d = place.iso && _issCountryData[place.iso];
+  // Per the user's preference + data-integrity vow: a row only appears if the
+  // value is genuinely populated. Over open water (not a country), ALL country-
+  // data rows are forced null so panels 1 & 2 collapse to zero rows and the
+  // cycler skips them — the strip then rotates only Sunset + Telemetry.
+  const setRow = (id, value, suffix) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const row = el.closest('.row');
+    if (value === null || value === undefined || value === '' || Number.isNaN(value)) {
+      if (row) row.style.display = 'none';
+      el.textContent = '';
+    } else {
+      if (row) row.style.display = '';
+      el.textContent = typeof value === 'number'
+        ? value.toFixed(1) + (suffix || '')
+        : String(value) + (suffix || '');
+    }
+  };
+  const country = place.isCountry;
+  setRow('issLifeAll', country && d && d.lifeAll != null ? d.lifeAll : null, ' yrs');
+  setRow('issLifeM',   country && d && d.lifeM   != null ? d.lifeM   : null, ' yrs');
+  setRow('issLifeF',   country && d && d.lifeF   != null ? d.lifeF   : null, ' yrs');
+  setRow('issMedAge',  null);                                    // not in std World Bank — never show
+  setRow('issPov',     country && d && d.pov  != null ? d.pov  : null, '%');
+  setRow('issDens',    country && d && d.dens != null ? d.dens : null, ' /km²');
+  setRow('issCap',     country && d && d.capital ? d.capital : null);
+  setRow('issRegion',  country && d && d.region ? d.region : null);
+}
+
+// Human-friendly age string for the TLE timestamp. NEVER shows "0.0h old".
+function _fmtAge(ms){
+  if (ms < 0) ms = 0;
+  const sec = ms / 1000;
+  if (sec < 60)    return 'just now';
+  const min = sec / 60;
+  if (min < 60)    return Math.round(min) + 'm ago';
+  const hr = min / 60;
+  if (hr < 24)     return hr.toFixed(1) + 'h ago';
+  return Math.floor(hr / 24) + 'd ago';
+}
+
+// ============================================================================
+// ISS sunrise + sunset prediction. ISS is in Earth's shadow when the line
+// from ISS to the Sun is occluded by Earth: angle(sun_dir, -iss_unit) <
+// earth_angular_radius. Scan from UTC midnight in 30s steps and record EVERY
+// transition — sunset is "lit → shadow", sunrise is "shadow → lit." Each type
+// is counted separately so the broadcast can show "Sunrise (N of M)" or
+// "Sunset (N of M)" depending on which is next. Cached daily.
+// ============================================================================
+let _issSkyCache = { dayKey: '', events: [], sunsets: 0, sunrises: 0 };
+function issComputeSkyEventsForToday(){
+  if (!iss.satrec) return { events: [], sunsets: 0, sunrises: 0 };
+  const now = new Date();
+  const utcMid = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const events = [];
+  let inShadowPrev = null;
+  let sunsetIdx = 0, sunriseIdx = 0;
+  const sun = new THREE.Vector3();
+  const issP = new THREE.Vector3();
+  for (let t = 0; t < 24 * 3600; t += 30) {
+    const d = new Date(utcMid + t * 1000);
+    const pv = satellite.propagate(iss.satrec, d);
+    if (!pv || !pv.position) continue;
+    issP.set(pv.position.x, pv.position.z, -pv.position.y);
+    issSunDirScene(d, sun);
+    const issDist = issP.length();
+    const earthAng = Math.asin(R_EARTH / 1000 / issDist);
+    const issUnit = issP.clone().normalize();
+    const cosAng = sun.dot(issUnit.clone().multiplyScalar(-1));
+    const ang = Math.acos(Math.max(-1, Math.min(1, cosAng)));
+    const inShadow = ang < earthAng;
+    if (inShadowPrev !== null && inShadowPrev !== inShadow) {
+      if (inShadow) {
+        // lit → shadow transition: orbital sunset.
+        sunsetIdx += 1;
+        events.push({ t: utcMid + t * 1000, type: 'sunset', idx: sunsetIdx });
+      } else {
+        // shadow → lit transition: orbital sunrise.
+        sunriseIdx += 1;
+        events.push({ t: utcMid + t * 1000, type: 'sunrise', idx: sunriseIdx });
+      }
+    }
+    inShadowPrev = inShadow;
+  }
+  return { events: events, sunsets: sunsetIdx, sunrises: sunriseIdx };
+}
+function issUpdateSunsetPanel(now, lat, lon, altKm, vMag){
+  const dayKey = now.toISOString().slice(0, 10);
+  if (_issSkyCache.dayKey !== dayKey) {
+    _issSkyCache.dayKey = dayKey;
+    const r = issComputeSkyEventsForToday();
+    _issSkyCache.events = r.events;
+    _issSkyCache.sunsets = r.sunsets;
+    _issSkyCache.sunrises = r.sunrises;
+  }
+  const events = _issSkyCache.events;
+  if (!events || !events.length) return;
+  const nowMs = now.getTime();
+  // Find the next upcoming sky event regardless of type.
+  let nextIdx = -1;
+  for (let i = 0; i < events.length; i++) {
+    if (events[i].t > nowMs) { nextIdx = i; break; }
+  }
+  if (nextIdx < 0) nextIdx = events.length - 1;
+  const target = events[nextIdx];
+  const minLeft = (target.t - nowMs) / 60000;
+  const dt = new Date(target.t);
+  const dateStr = dt.toLocaleDateString('en-US', {month:'long', day:'numeric', year:'numeric', timeZone:'UTC'});
+  const timeStr = dt.toISOString().slice(11, 19) + ' UTC';
+  const totalForType = target.type === 'sunset' ? _issSkyCache.sunsets : _issSkyCache.sunrises;
+  const label = target.type === 'sunset' ? 'Sunset' : 'Sunrise';
+  const $ = (id) => document.getElementById(id);
+  if (minLeft <= 2 && minLeft >= -2) {
+    $('issSunsetTitle').textContent = 'Now: ' + label + ' (' + target.idx + ' of ' + totalForType + ')';
+  } else if (minLeft > 0) {
+    $('issSunsetTitle').textContent =
+      label + ' (' + target.idx + ' of ' + totalForType + ') in ' + minLeft.toFixed(0) + ' min';
+  } else {
+    $('issSunsetTitle').textContent = 'Final ' + label.toLowerCase() + ' of the day (' + totalForType + ' of ' + totalForType + ')';
+  }
+  $('issSunsetWhen').textContent = dateStr + '   ' + timeStr;
+  $('issSunsetTel1').textContent =
+    vMag.toFixed(4) + ' km/s   Elev: ' + altKm.toFixed(1) + ' km';
+  $('issSunsetTel2').textContent =
+    Math.abs(lat).toFixed(2) + '°' + (lat>=0?'N':'S') + ', ' +
+    Math.abs(lon).toFixed(2) + '°' + (lon>=0?'E':'W');
+}
+
+// ============================================================================
+// Panel cycler — rotates the right-hand stats card through 4 modes every 8s,
+// matching NASA's broadcast cadence. Skips empty country panels if we're
+// over open ocean and have no flag/data.
+// ============================================================================
+function issStartCycler(){
+  let idx = 0;
+  const panels = document.querySelectorAll('#issStats .panel');
+  const pips = document.querySelectorAll('#issStats .pip');
+  // A panel is "useful" iff it has at least one .row with display !== 'none'
+  // OR it's the sunset panel (panel 0, always populated) or telemetry (panel 3).
+  function isUseful(i){
+    if (i === 0 || i === 3) return true;
+    const panel = panels[i];
+    if (!panel) return false;
+    const rows = panel.querySelectorAll('.row');
+    for (const r of rows) {
+      if (getComputedStyle(r).display !== 'none') return true;
+    }
+    return false;
+  }
+  function show(i){
+    panels.forEach((p, j) => p.classList.toggle('on', j === i));
+    pips.forEach((p, j) => p.classList.toggle('on', j === i));
+  }
+  function next(){
+    for (let tries = 0; tries < panels.length; tries++) {
+      idx = (idx + 1) % panels.length;
+      if (isUseful(idx)) break;
+    }
+    show(idx);
+  }
+  show(0);
+  setInterval(next, 8000);
+}
+
 requestAnimationFrame(frame);
 
 // === Post-processing pipeline ===
@@ -3716,7 +4882,14 @@ function frame(now){
     keys.delete('Space'); keys.delete('ControlLeft');
   }
   if(!state.paused && state.controlsEnabled){
-    if(state.mode === 'observer'){
+    if(state.issMode){
+      // ISS lock: bind simTime to real GMST so updateSpaceObjects rotates
+      // Earth to the correct sidereal angle without any further override,
+      // then override body positions for an Earth-centric ISS-altitude view.
+      const _gmst = satellite.gstime(new Date());
+      state.simTime = (_gmst / (2 * Math.PI)) * 86164;
+      issPreStep();
+    } else if(state.mode === 'observer'){
       // Advance bodies & sim time, but skip ship rotation/thrust + avatar logic.
       state.lastSimDt = simDt;
       const maxStep = state.warpIndex > 4 ? 8 : 2;
@@ -3799,7 +4972,12 @@ function frame(now){
     const dofActive = state.focusMode !== 'infinity';
     post.uAperture.value = dofActive ? state.aperture : 0.0;
   }
-  post.composer.render();
+  if(state.issMode){
+    issUpdateHud();
+    issRenderFrame();
+  } else {
+    post.composer.render();
+  }
   requestAnimationFrame(frame);
 }
 
@@ -4444,6 +5622,22 @@ function toggleCentrifuge(){
 }
 
 function updateCamera(){
+  if(state.issMode){
+    // Aim the camera now (before updateSpaceObjects + updateSunScreen) so the
+    // sun-screen / bloom / diffraction post-FX run against the correct camera
+    // matrix. In split-screen, this sets the FIRST panel's view; the per-
+    // panel re-aim inside issRenderFrame still works, but the lens-flare
+    // sun-screen reflects whichever camera was last set here.
+    if (iss.satrec) {
+      const now = new Date();
+      if (issPropagate(now, iss._scenePos, iss._sceneVel)) {
+        issAimCamera(iss.views[iss.viewIndex]);
+        spaceCamera.aspect = innerWidth / innerHeight;
+        spaceCamera.updateProjectionMatrix();
+      }
+    }
+    return;
+  }
   if(state.mode === 'observer'){
     // Camera lock-on: rebuild gaze every frame to point at the target body so the
     // observer's orbital flight stays cinematically framed. Without this, the
