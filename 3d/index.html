@@ -996,14 +996,33 @@ async function issLoadLiveClouds(){
     // those are persistent backdrops and read as light haze, not bug.
     const imgData = ctx.getImageData(0, 0, GMGSI_W, GMGSI_H);
     const px = imgData.data;
-    let cloudPixels = 0;
-    for (let i = 0; i < px.length; i += 4) {
-      const v = px[i];                       // grayscale: R == G == B
-      const norm = Math.max(0, v - 25) / 230;
+    // Pass 1: noise-floor subtraction + gamma boost. Stash result in tmp so
+    // pass 2's median filter has clean read-only input.
+    const tmp = new Uint8Array(GMGSI_W * GMGSI_H);
+    for (let i = 0, t = 0; i < px.length; i += 4, t++) {
+      const norm = Math.max(0, px[i] - 25) / 230;
       const boosted = Math.pow(Math.min(1, norm), 0.55);
-      const out = Math.round(boosted * 255);
-      px[i] = out; px[i+1] = out; px[i+2] = out; px[i+3] = 255;
-      if (out > 50) cloudPixels++;
+      tmp[t] = Math.round(boosted * 255);
+    }
+    // Pass 2: 3-tap horizontal median (wraparound). Removes the 1-pixel-wide
+    // bright vertical seams between GMGSI's 5 geostationary satellites —
+    // those calibration discontinuities otherwise get amplified by the
+    // bloom post-FX into bright "sword" streaks across the Earth. Median
+    // (vs. average) preserves real cloud edges that span many pixels.
+    const med3 = (a, b, c) => Math.max(Math.min(a, b), Math.min(Math.max(a, b), c));
+    let cloudPixels = 0;
+    for (let row = 0; row < GMGSI_H; row++) {
+      const base = row * GMGSI_W;
+      for (let col = 0; col < GMGSI_W; col++) {
+        const t = base + col;
+        const c = tmp[t];
+        const l = col > 0          ? tmp[t - 1] : tmp[base + GMGSI_W - 1];
+        const r = col < GMGSI_W - 1 ? tmp[t + 1] : tmp[base];
+        const out = med3(l, c, r);
+        const i = t * 4;
+        px[i] = out; px[i+1] = out; px[i+2] = out; px[i+3] = 255;
+        if (out > 50) cloudPixels++;
+      }
     }
     ctx.putImageData(imgData, 0, 0);
     const tex = new THREE.CanvasTexture(canvas);
