@@ -739,34 +739,31 @@ function issDetect(){
   } catch { return false; }
 }
 
-// LIVE CLOUDS (NASA GIBS) — config + state declared early to avoid TDZ when
-// issInit() / issLoadLiveClouds() reference them during module evaluation.
+// LIVE CLOUDS — NOAA GMGSI (Global Mosaic of Geostationary Satellite Imagery).
 //
-// IMPORTANT: GIBS EPSG:4326 TileMatrixSet "250m" is NOT power-of-2 doubling.
-// Empirically verified matrix dimensions (MatrixWidth × MatrixHeight):
-//   z=0: 2×1  (covers world at 1024×512  — too coarse for clouds)
-//   z=1: 3×2  (1536×1024 — 3:2 aspect, not equirectangular)
-//   z=2: 5×3  (2560×1536 — 5:3 aspect, not equirectangular)
-//   z=3: 10×5 (5120×2560 — NATIVE 2:1 aspect; ~50 tiles, ~5MB, ~94KB/tile)
-//   z=4: 20×10 (too heavy)
-// z=3 is the sweet spot: real equirectangular ratio + reasonable bandwidth.
-// Three satellites = three overpasses per day at different local solar times.
-// Combining them via per-pixel MAX cloud probability fills in clouds that
-// any one sensor missed. VIIRS_SNPP and MODIS_Aqua both pass ~13:30 local
-// (different orbits), MODIS_Terra passes ~10:30 local — so each ground
-// location is observed 3× per day at distinct times.
-const GIBS_LAYERS = [
-  'VIIRS_SNPP_CorrectedReflectance_TrueColor',
-  'MODIS_Aqua_CorrectedReflectance_TrueColor',
-  'MODIS_Terra_CorrectedReflectance_TrueColor'
-];
-const GIBS_MATRIX = '250m';
-const GIBS_ZOOM   = 3;
-const GIBS_COLS   = 10;
-const GIBS_ROWS   = 5;
-const GIBS_TILE   = 512;
-const GIBS_REFRESH_MS = 3 * 3600 * 1000;       // 3h refresh (was 6h)
-const GIBS_MAX_DATES = 2;                       // try today + yesterday only
+// This is what we WERE looking for the whole time. NOAA NESDIS publishes an
+// hourly global mosaic stitched from 5 geostationary satellites (GOES-East,
+// GOES-West, Himawari-9, Meteosat-9, Meteosat-10) covering 60°N to 60°S —
+// which is exactly the range ISS reaches (±51.6°). Served as WMS by the
+// nowCOAST GeoServer at nowcoast.noaa.gov with `Access-Control-Allow-Origin:*`.
+//
+// ONE HTTP request returns the full equirectangular 4096×2048 cloud mosaic
+// (grayscale JPEG, ~500 KB). Refresh every 30 min to catch each new hourly
+// publish (NOAA data latency is 2-3h so the freshest tile is always 2-3h old).
+//
+// Compared to the multi-tile GIBS approach: 1 request vs 150, 500 KB vs 15 MB,
+// hourly vs daily updates, multi-satellite mosaic vs single-overpass snapshot.
+// Free, public, no API key, no registration.
+const GMGSI_LAYER = 'global_visible_imagery_mosaic';
+const GMGSI_W = 4096, GMGSI_H = 2048;
+const GMGSI_URL =
+  'https://nowcoast.noaa.gov/geoserver/satellite/wms?' +
+  'SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap' +
+  '&LAYERS=' + GMGSI_LAYER +
+  '&CRS=EPSG:4326&BBOX=-90,-180,90,180' +
+  '&WIDTH=' + GMGSI_W + '&HEIGHT=' + GMGSI_H +
+  '&FORMAT=image/jpeg';
+const GMGSI_REFRESH_MS = 30 * 60 * 1000;       // 30 min — covers hourly publish
 let _issCloudsLoading = false;
 let _issCloudsLoaded = false;
 
@@ -850,7 +847,7 @@ function issInit(){
   // Live clouds from NASA GIBS — fire and forget. Falls back to the static
   // cloud texture on error; refreshed every 6h.
   issLoadLiveClouds();
-  setInterval(issLoadLiveClouds, GIBS_REFRESH_MS);
+  setInterval(issLoadLiveClouds, GMGSI_REFRESH_MS);
   // Kick off the right-panel cycler.
   issStartCycler();
 }
@@ -973,118 +970,78 @@ function issAimCamera(viewName){
   spaceCamera.fov = 70;
 }
 
-async function _issFetchLayerCanvas(layer, date, W, H, tileW, tileH){
-  const canvas = document.createElement('canvas');
-  canvas.width = W; canvas.height = H;
-  const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#000';
-  ctx.fillRect(0, 0, W, H);
-  const fetches = [];
-  for (let row = 0; row < GIBS_ROWS; row++) {
-    for (let col = 0; col < GIBS_COLS; col++) {
-      fetches.push((async () => {
-        const img = new Image();
-        img.crossOrigin = 'anonymous';
-        const url = 'https://gibs.earthdata.nasa.gov/wmts/epsg4326/best/'
-          + layer + '/default/' + date + '/' + GIBS_MATRIX
-          + '/' + GIBS_ZOOM + '/' + row + '/' + col + '.jpg';
-        await new Promise((res, rej) => {
-          img.onload = res;
-          img.onerror = () => rej(new Error('tile ' + row + '/' + col));
-          img.src = url;
-        });
-        ctx.drawImage(img, col * tileW, row * tileH, tileW, tileH);
-      })());
-    }
-  }
-  await Promise.all(fetches);
-  return ctx.getImageData(0, 0, W, H);
-}
-
-// Per-pixel cloud-probability extraction from a true-color satellite frame.
-// LOOSENED from v1: brightness threshold 95 (was 130), gamma 0.6 boost so
-// thin cirrus registers, saturation penalty 1.8 (was 2.2). Tradeoff: bright
-// deserts may leak through ~15–25 intensity. Acceptable for cloud-density;
-// the cloud layer is semi-transparent so faint desert bleed reads as haze.
-function _issExtractClouds(srcData, accumPx){
-  const sp = srcData.data;
-  for (let i = 0; i < sp.length; i += 4) {
-    const r = sp[i], g = sp[i+1], b = sp[i+2];
-    const brightness = (r + g + b) / 3;
-    const mx = Math.max(r, g, b);
-    const mn = Math.min(r, g, b);
-    const sat = mx > 0 ? (mx - mn) / mx : 0;
-    let p = 0;
-    if (brightness > 95) {
-      const b01 = Math.min(1, (brightness - 95) / 130);
-      const desat = Math.max(0, 1 - sat * 1.8);
-      p = Math.pow(b01 * desat, 0.60);
-    }
-    const v = Math.round(p * 255);
-    // UNION across satellites: keep MAX cloud probability per pixel.
-    if (v > accumPx[i]) {
-      accumPx[i] = v; accumPx[i+1] = v; accumPx[i+2] = v;
-    }
-    accumPx[i+3] = 255;
-  }
-}
-
 async function issLoadLiveClouds(){
   if (_issCloudsLoading) return false;
   _issCloudsLoading = true;
-  // Composite size — downscale z=3 native (5120×2560) to 4096×2048 so GPU
-  // memory matches the existing static cloud texture.
-  const W = 4096, H = 2048;
-  const tileW = W / GIBS_COLS;
-  const tileH = H / GIBS_ROWS;
-  // Date cascade: today first, fall back up to GIBS_MAX_DATES days back.
-  const dates = [];
-  const t0 = Date.now();
-  for (let i = 0; i < GIBS_MAX_DATES; i++) {
-    dates.push(new Date(t0 - i * 86400000).toISOString().slice(0, 10));
-  }
-  // Final composite accumulator — initialized black, gets MAX-merged per layer.
-  const finalCanvas = document.createElement('canvas');
-  finalCanvas.width = W; finalCanvas.height = H;
-  const finalCtx = finalCanvas.getContext('2d');
-  finalCtx.fillStyle = '#000';
-  finalCtx.fillRect(0, 0, W, H);
-  const accumImgData = finalCtx.getImageData(0, 0, W, H);
-  let layersLoaded = 0;
-  let lastDate = '';
-  for (const layer of GIBS_LAYERS) {
-    for (const date of dates) {
-      try {
-        const srcData = await _issFetchLayerCanvas(layer, date, W, H, tileW, tileH);
-        _issExtractClouds(srcData, accumImgData.data);
-        layersLoaded += 1;
-        lastDate = date;
-        console.log('[ISS] cloud layer loaded:', layer, date);
-        break;                                    // next layer
-      } catch (e) {
-        console.warn('[ISS] failed', layer, date, e.message || e);
-      }
+  try {
+    // Cache-buster keyed to the current hour — so refreshing within a single
+    // hour gets the cached image, but next hour pulls fresh data.
+    const hourBucket = Math.floor(Date.now() / 3600000);
+    const url = GMGSI_URL + '&_=' + hourBucket;
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    await new Promise((res, rej) => {
+      img.onload = res;
+      img.onerror = () => rej(new Error('GMGSI fetch failed (network/CORS)'));
+      img.src = url;
+    });
+    const canvas = document.createElement('canvas');
+    canvas.width = GMGSI_W; canvas.height = GMGSI_H;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, GMGSI_W, GMGSI_H);
+    // Process — GMGSI VIS is grayscale where bright = sunlight reflected by
+    // clouds/snow/sand. Subtract noise floor (~25/255 over dark ocean), then
+    // gamma 0.55 boost so thin clouds register visibly. Snow/sand still leak
+    // through (no easy way to distinguish from a single-band sensor), but
+    // those are persistent backdrops and read as light haze, not bug.
+    const imgData = ctx.getImageData(0, 0, GMGSI_W, GMGSI_H);
+    const px = imgData.data;
+    let cloudPixels = 0;
+    for (let i = 0; i < px.length; i += 4) {
+      const v = px[i];                       // grayscale: R == G == B
+      const norm = Math.max(0, v - 25) / 230;
+      const boosted = Math.pow(Math.min(1, norm), 0.55);
+      const out = Math.round(boosted * 255);
+      px[i] = out; px[i+1] = out; px[i+2] = out; px[i+3] = 255;
+      if (out > 50) cloudPixels++;
     }
-  }
-  if (layersLoaded === 0) {
+    ctx.putImageData(imgData, 0, 0);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 4;
+    tex.needsUpdate = true;
+    // FORCE-REPLACE the cloud material. The existing pipeline upgrades the
+    // cloud material to a cube-map shader (samplerCube uniforms, no .map)
+    // shortly after init; just setting material.map on that upgraded
+    // material is silently dropped. A fresh MeshBasicMaterial guarantees
+    // the swap actually takes effect. Trade-off: we lose the cube shader's
+    // cloud shading — acceptable for ISS mode where the cloud layer IS the
+    // focal point and the underlying Earth shader still handles day/night.
+    if (groups.earthClouds) {
+      groups.earthClouds.material = new THREE.MeshBasicMaterial({
+        map: tex,
+        alphaMap: tex,
+        transparent: true,
+        opacity: 1.0,
+        depthWrite: false,
+        blending: THREE.NormalBlending
+      });
+    }
+    if (groups.earthCirrus) groups.earthCirrus.visible = false;
+    const pct = (100 * cloudPixels / (GMGSI_W * GMGSI_H)).toFixed(1);
+    console.log('[ISS] GMGSI clouds loaded — NOAA hourly global composite, '
+      + pct + '% cloud coverage');
+    _issCloudsLoaded = true;
+    _issCloudsLoading = false;
+    return true;
+  } catch (e) {
+    console.warn('[ISS] GMGSI fetch failed:', e.message || e,
+                 '— keeping static cloud fallback');
     _issCloudsLoading = false;
     return false;
   }
-  finalCtx.putImageData(accumImgData, 0, 0);
-  const tex = new THREE.CanvasTexture(finalCanvas);
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.ClampToEdgeWrapping;
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 4;
-  tex.needsUpdate = true;
-  if (groups.earthClouds && groups.earthClouds.material) {
-    groups.earthClouds.material.map = tex;
-    groups.earthClouds.material.needsUpdate = true;
-  }
-  _issCloudsLoaded = true;
-  _issCloudsLoading = false;
-  console.log('[ISS] composite ready —', layersLoaded, 'satellites unioned, latest', lastDate);
-  return true;
 }
 
 // Single-or-split frame render. Replaces the bare `post.composer.render()`
