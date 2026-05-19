@@ -991,24 +991,75 @@ async function issLoadLiveClouds(){
     ctx.drawImage(img, 0, 0, GMGSI_W, GMGSI_H);
     // Process — GMGSI VIS is grayscale where bright = sunlight reflected by
     // clouds/snow/sand. Subtract noise floor (~25/255 over dark ocean), then
-    // gamma 0.55 boost so thin clouds register visibly. Snow/sand still leak
-    // through (no easy way to distinguish from a single-band sensor), but
-    // those are persistent backdrops and read as light haze, not bug.
+    // gamma 0.55 boost so thin clouds register visibly.
     const imgData = ctx.getImageData(0, 0, GMGSI_W, GMGSI_H);
     const px = imgData.data;
-    // Pass 1: noise-floor subtraction + gamma boost. Stash result in tmp so
-    // pass 2's median filter has clean read-only input.
+
+    // === Stage 0: Mosaic-boundary cleanup =================================
+    // NOAA encodes the GMGSI antimeridian boundary (lon = +/-180 deg) as a
+    // pair of near-white "no-data" columns at col 0 and col 4095, with
+    // brightness ~252/255 (vs ~66 baseline). With RepeatWrapping the two
+    // edges wrap to the same point on the sphere, producing a bright
+    // vertical streak that the bloom post-FX amplifies into a laser-like
+    // artifact. Detect bright outlier columns from data (so we self-correct
+    // if NOAA changes the pattern) and replace them with horizontal-linear
+    // interpolation from the nearest non-outlier neighbors (with wrap).
+    {
+      const colMeans = new Float32Array(GMGSI_W);
+      for (let row = 0; row < GMGSI_H; row++) {
+        const baseR = row * GMGSI_W;
+        for (let col = 0; col < GMGSI_W; col++) {
+          colMeans[col] += px[(baseR + col) * 4];
+        }
+      }
+      for (let c = 0; c < GMGSI_W; c++) colMeans[c] /= GMGSI_H;
+      // Baseline = median of column means (robust to the outliers themselves)
+      const sortedMeans = Float32Array.from(colMeans).sort();
+      const baseline = sortedMeans[GMGSI_W >> 1];
+      const isOutlier = new Uint8Array(GMGSI_W);
+      let outlierCount = 0;
+      for (let c = 0; c < GMGSI_W; c++) {
+        if (colMeans[c] > baseline * 1.5) { isOutlier[c] = 1; outlierCount++; }
+      }
+      if (outlierCount > 0) {
+        for (let c = 0; c < GMGSI_W; c++) {
+          if (!isOutlier[c]) continue;
+          // Walk left until we find a non-outlier column (wrap-around).
+          let leftCol = -1;
+          for (let dc = 1; dc < GMGSI_W; dc++) {
+            const tc = (c - dc + GMGSI_W) % GMGSI_W;
+            if (!isOutlier[tc]) { leftCol = tc; break; }
+          }
+          // Walk right.
+          let rightCol = -1;
+          for (let dc = 1; dc < GMGSI_W; dc++) {
+            const tc = (c + dc) % GMGSI_W;
+            if (!isOutlier[tc]) { rightCol = tc; break; }
+          }
+          if (leftCol < 0 || rightCol < 0) continue;
+          for (let row = 0; row < GMGSI_H; row++) {
+            const baseR = row * GMGSI_W;
+            const lv = px[(baseR + leftCol) * 4];
+            const rv = px[(baseR + rightCol) * 4];
+            const v = (lv + rv) >> 1;
+            const i = (baseR + c) * 4;
+            px[i] = v; px[i+1] = v; px[i+2] = v;
+          }
+        }
+        console.log('[ISS] GMGSI mosaic cleanup: removed', outlierCount,
+          'outlier column(s) at the antimeridian boundary');
+      }
+    }
+
+    // === Stage 1: noise-floor subtraction + gamma boost ====================
     const tmp = new Uint8Array(GMGSI_W * GMGSI_H);
     for (let i = 0, t = 0; i < px.length; i += 4, t++) {
       const norm = Math.max(0, px[i] - 25) / 230;
       const boosted = Math.pow(Math.min(1, norm), 0.55);
       tmp[t] = Math.round(boosted * 255);
     }
-    // Pass 2: 3-tap horizontal median (wraparound). Removes the 1-pixel-wide
-    // bright vertical seams between GMGSI's 5 geostationary satellites —
-    // those calibration discontinuities otherwise get amplified by the
-    // bloom post-FX into bright "sword" streaks across the Earth. Median
-    // (vs. average) preserves real cloud edges that span many pixels.
+
+    // === Stage 2: 3-tap horizontal median (catches any residual spikes) ===
     const med3 = (a, b, c) => Math.max(Math.min(a, b), Math.min(Math.max(a, b), c));
     let cloudPixels = 0;
     for (let row = 0; row < GMGSI_H; row++) {
