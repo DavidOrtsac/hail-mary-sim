@@ -750,13 +750,23 @@ function issDetect(){
 //   z=3: 10×5 (5120×2560 — NATIVE 2:1 aspect; ~50 tiles, ~5MB, ~94KB/tile)
 //   z=4: 20×10 (too heavy)
 // z=3 is the sweet spot: real equirectangular ratio + reasonable bandwidth.
-const GIBS_LAYER  = 'VIIRS_SNPP_CorrectedReflectance_TrueColor';
+// Three satellites = three overpasses per day at different local solar times.
+// Combining them via per-pixel MAX cloud probability fills in clouds that
+// any one sensor missed. VIIRS_SNPP and MODIS_Aqua both pass ~13:30 local
+// (different orbits), MODIS_Terra passes ~10:30 local — so each ground
+// location is observed 3× per day at distinct times.
+const GIBS_LAYERS = [
+  'VIIRS_SNPP_CorrectedReflectance_TrueColor',
+  'MODIS_Aqua_CorrectedReflectance_TrueColor',
+  'MODIS_Terra_CorrectedReflectance_TrueColor'
+];
 const GIBS_MATRIX = '250m';
 const GIBS_ZOOM   = 3;
 const GIBS_COLS   = 10;
 const GIBS_ROWS   = 5;
 const GIBS_TILE   = 512;
-const GIBS_REFRESH_MS = 6 * 3600 * 1000;
+const GIBS_REFRESH_MS = 3 * 3600 * 1000;       // 3h refresh (was 6h)
+const GIBS_MAX_DATES = 2;                       // try today + yesterday only
 let _issCloudsLoading = false;
 let _issCloudsLoaded = false;
 
@@ -963,87 +973,118 @@ function issAimCamera(viewName){
   spaceCamera.fov = 70;
 }
 
+async function _issFetchLayerCanvas(layer, date, W, H, tileW, tileH){
+  const canvas = document.createElement('canvas');
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, W, H);
+  const fetches = [];
+  for (let row = 0; row < GIBS_ROWS; row++) {
+    for (let col = 0; col < GIBS_COLS; col++) {
+      fetches.push((async () => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        const url = 'https://gibs.earthdata.nasa.gov/wmts/epsg4326/best/'
+          + layer + '/default/' + date + '/' + GIBS_MATRIX
+          + '/' + GIBS_ZOOM + '/' + row + '/' + col + '.jpg';
+        await new Promise((res, rej) => {
+          img.onload = res;
+          img.onerror = () => rej(new Error('tile ' + row + '/' + col));
+          img.src = url;
+        });
+        ctx.drawImage(img, col * tileW, row * tileH, tileW, tileH);
+      })());
+    }
+  }
+  await Promise.all(fetches);
+  return ctx.getImageData(0, 0, W, H);
+}
+
+// Per-pixel cloud-probability extraction from a true-color satellite frame.
+// LOOSENED from v1: brightness threshold 95 (was 130), gamma 0.6 boost so
+// thin cirrus registers, saturation penalty 1.8 (was 2.2). Tradeoff: bright
+// deserts may leak through ~15–25 intensity. Acceptable for cloud-density;
+// the cloud layer is semi-transparent so faint desert bleed reads as haze.
+function _issExtractClouds(srcData, accumPx){
+  const sp = srcData.data;
+  for (let i = 0; i < sp.length; i += 4) {
+    const r = sp[i], g = sp[i+1], b = sp[i+2];
+    const brightness = (r + g + b) / 3;
+    const mx = Math.max(r, g, b);
+    const mn = Math.min(r, g, b);
+    const sat = mx > 0 ? (mx - mn) / mx : 0;
+    let p = 0;
+    if (brightness > 95) {
+      const b01 = Math.min(1, (brightness - 95) / 130);
+      const desat = Math.max(0, 1 - sat * 1.8);
+      p = Math.pow(b01 * desat, 0.60);
+    }
+    const v = Math.round(p * 255);
+    // UNION across satellites: keep MAX cloud probability per pixel.
+    if (v > accumPx[i]) {
+      accumPx[i] = v; accumPx[i+1] = v; accumPx[i+2] = v;
+    }
+    accumPx[i+3] = 255;
+  }
+}
+
 async function issLoadLiveClouds(){
   if (_issCloudsLoading) return false;
   _issCloudsLoading = true;
   // Composite size — downscale z=3 native (5120×2560) to 4096×2048 so GPU
-  // memory matches the existing static cloud texture. Each tile renders at
-  // tileW × tileH px on the destination canvas.
+  // memory matches the existing static cloud texture.
   const W = 4096, H = 2048;
-  const tileW = W / GIBS_COLS;          // 409.6 px
-  const tileH = H / GIBS_ROWS;          // 409.6 px
-  // Try today first, fall back up to 4 days (handles VIIRS processing lag).
+  const tileW = W / GIBS_COLS;
+  const tileH = H / GIBS_ROWS;
+  // Date cascade: today first, fall back up to GIBS_MAX_DATES days back.
   const dates = [];
   const t0 = Date.now();
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < GIBS_MAX_DATES; i++) {
     dates.push(new Date(t0 - i * 86400000).toISOString().slice(0, 10));
   }
-  for (const date of dates) {
-    try {
-      const canvas = document.createElement('canvas');
-      canvas.width = W; canvas.height = H;
-      const ctx = canvas.getContext('2d');
-      ctx.fillStyle = '#000';
-      ctx.fillRect(0, 0, W, H);
-      const fetches = [];
-      for (let row = 0; row < GIBS_ROWS; row++) {
-        for (let col = 0; col < GIBS_COLS; col++) {
-          fetches.push((async () => {
-            const img = new Image();
-            img.crossOrigin = 'anonymous';
-            const url = 'https://gibs.earthdata.nasa.gov/wmts/epsg4326/best/'
-              + GIBS_LAYER + '/default/' + date + '/' + GIBS_MATRIX
-              + '/' + GIBS_ZOOM + '/' + row + '/' + col + '.jpg';
-            await new Promise((res, rej) => {
-              img.onload = res;
-              img.onerror = () => rej(new Error('tile ' + row + '/' + col));
-              img.src = url;
-            });
-            ctx.drawImage(img, col * tileW, row * tileH, tileW, tileH);
-          })());
-        }
+  // Final composite accumulator — initialized black, gets MAX-merged per layer.
+  const finalCanvas = document.createElement('canvas');
+  finalCanvas.width = W; finalCanvas.height = H;
+  const finalCtx = finalCanvas.getContext('2d');
+  finalCtx.fillStyle = '#000';
+  finalCtx.fillRect(0, 0, W, H);
+  const accumImgData = finalCtx.getImageData(0, 0, W, H);
+  let layersLoaded = 0;
+  let lastDate = '';
+  for (const layer of GIBS_LAYERS) {
+    for (const date of dates) {
+      try {
+        const srcData = await _issFetchLayerCanvas(layer, date, W, H, tileW, tileH);
+        _issExtractClouds(srcData, accumImgData.data);
+        layersLoaded += 1;
+        lastDate = date;
+        console.log('[ISS] cloud layer loaded:', layer, date);
+        break;                                    // next layer
+      } catch (e) {
+        console.warn('[ISS] failed', layer, date, e.message || e);
       }
-      await Promise.all(fetches);
-      // Per-pixel cloud extraction. Clouds = bright AND low-saturation.
-      // Output: grayscale where v=255 is opaque cloud, v=0 is no cloud —
-      // matching the format of the existing earth_8k_clouds.jpg so the
-      // existing shader's luminance-derived alpha continues to work.
-      const imgData = ctx.getImageData(0, 0, W, H);
-      const px = imgData.data;
-      for (let i = 0; i < px.length; i += 4) {
-        const r = px[i], g = px[i+1], b = px[i+2];
-        const brightness = (r + g + b) / 3;
-        const mx = Math.max(r, g, b);
-        const mn = Math.min(r, g, b);
-        const sat = mx > 0 ? (mx - mn) / mx : 0;
-        let p = 0;
-        if (brightness > 130) {
-          p = Math.min(1, (brightness - 130) / 90) * Math.max(0, 1 - sat * 2.2);
-        }
-        const v = Math.round(p * 255);
-        px[i] = v; px[i+1] = v; px[i+2] = v; px[i+3] = 255;
-      }
-      ctx.putImageData(imgData, 0, 0);
-      const tex = new THREE.CanvasTexture(canvas);
-      tex.wrapS = THREE.RepeatWrapping;
-      tex.wrapT = THREE.ClampToEdgeWrapping;
-      tex.colorSpace = THREE.SRGBColorSpace;
-      tex.anisotropy = 4;
-      tex.needsUpdate = true;
-      if (groups.earthClouds && groups.earthClouds.material) {
-        groups.earthClouds.material.map = tex;
-        groups.earthClouds.material.needsUpdate = true;
-      }
-      _issCloudsLoaded = true;
-      _issCloudsLoading = false;
-      console.log('[ISS] live clouds loaded from', date);
-      return true;
-    } catch (e) {
-      console.warn('[ISS] GIBS clouds failed for', date, e.message || e);
     }
   }
+  if (layersLoaded === 0) {
+    _issCloudsLoading = false;
+    return false;
+  }
+  finalCtx.putImageData(accumImgData, 0, 0);
+  const tex = new THREE.CanvasTexture(finalCanvas);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  tex.needsUpdate = true;
+  if (groups.earthClouds && groups.earthClouds.material) {
+    groups.earthClouds.material.map = tex;
+    groups.earthClouds.material.needsUpdate = true;
+  }
+  _issCloudsLoaded = true;
   _issCloudsLoading = false;
-  return false;
+  console.log('[ISS] composite ready —', layersLoaded, 'satellites unioned, latest', lastDate);
+  return true;
 }
 
 // Single-or-split frame render. Replaces the bare `post.composer.render()`
