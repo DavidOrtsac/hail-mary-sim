@@ -114,6 +114,12 @@
   body.iss-mode #fpsChip{display:none !important}
   body.iss-mode #boot{display:none}
   body.iss-mode{background:#000}
+  /* Secret freeCam mode: hides all broadcast chrome so the operator can fly
+     the camera privately while still seeing the live-clouds Earth in real-
+     world GMST + sun orientation. Toggled by Backquote (no on-screen hint). */
+  body.iss-mode.iss-freecam #issStrip,
+  body.iss-mode.iss-freecam #issLabels,
+  body.iss-mode.iss-freecam #issBrandMark{display:none !important}
 
   /* Bottom broadcast strip — height tuned to NASA livestream proportion (~14%
      of a 1080p frame). Sits over the canvas, so split-screen viewports stay
@@ -329,7 +335,8 @@
   <div id="pauseBox">
     <h2>EARTHSHINE</h2>
     <p style="margin:-6px 0 14px;color:#7aa0c4;letter-spacing:.22em;font-size:10px">A TRANSCENDIANT LABS PRODUCTION</p>
-    <button id="resumeBtn" style="width:100%;padding:14px;border:1.5px solid #ffb85a;background:rgba(255,184,90,.18);color:#ffb85a;font-size:13px;letter-spacing:.20em;font-weight:700;cursor:pointer;border-radius:4px;margin-bottom:14px">▶ RESUME</button>
+    <button id="resumeBtn" style="width:100%;padding:14px;border:1.5px solid #ffb85a;background:rgba(255,184,90,.18);color:#ffb85a;font-size:13px;letter-spacing:.20em;font-weight:700;cursor:pointer;border-radius:4px;margin-bottom:10px">▶ RESUME</button>
+    <a href="?iss=1" id="issModeBtn" style="display:flex;align-items:center;justify-content:center;gap:10px;width:100%;padding:14px;border:1.5px solid #c8202a;background:rgba(200,32,42,.14);color:#ff8a8a;font-size:13px;letter-spacing:.20em;font-weight:700;cursor:pointer;border-radius:4px;margin-bottom:14px;text-decoration:none;font-family:inherit"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#ff5050"></span>ENTER ISS LIVE MODE</a>
     <div style="color:#ffb85a;letter-spacing:.16em;font-size:11px;margin-top:4px">MODE</div>
     <div class="modeToggle">
       <button class="modeBtn" id="modeObserverBtn">OBSERVER</button>
@@ -708,6 +715,7 @@ const iss = {
   splitMode: 0,                           // 0 = single, 1 = 2-up, 2 = 4-up
   viewIndex: 0,                           // index into iss.views (single-view mode)
   views: ['LIMB','FORWARD','NADIR','TRAILING'],
+  freeCam: false,                         // secret operator-only WASD/mouse override
   // Embedded fallback TLE — superseded by live fetch within ~1s of page load
   // on a healthy network. Refreshed offline-resilient.
   fallbackTLE: [
@@ -730,6 +738,27 @@ function issDetect(){
     return p.get('iss') === '1' || p.has('iss');
   } catch { return false; }
 }
+
+// LIVE CLOUDS (NASA GIBS) — config + state declared early to avoid TDZ when
+// issInit() / issLoadLiveClouds() reference them during module evaluation.
+//
+// IMPORTANT: GIBS EPSG:4326 TileMatrixSet "250m" is NOT power-of-2 doubling.
+// Empirically verified matrix dimensions (MatrixWidth × MatrixHeight):
+//   z=0: 2×1  (covers world at 1024×512  — too coarse for clouds)
+//   z=1: 3×2  (1536×1024 — 3:2 aspect, not equirectangular)
+//   z=2: 5×3  (2560×1536 — 5:3 aspect, not equirectangular)
+//   z=3: 10×5 (5120×2560 — NATIVE 2:1 aspect; ~50 tiles, ~5MB, ~94KB/tile)
+//   z=4: 20×10 (too heavy)
+// z=3 is the sweet spot: real equirectangular ratio + reasonable bandwidth.
+const GIBS_LAYER  = 'VIIRS_SNPP_CorrectedReflectance_TrueColor';
+const GIBS_MATRIX = '250m';
+const GIBS_ZOOM   = 3;
+const GIBS_COLS   = 10;
+const GIBS_ROWS   = 5;
+const GIBS_TILE   = 512;
+const GIBS_REFRESH_MS = 6 * 3600 * 1000;
+let _issCloudsLoading = false;
+let _issCloudsLoaded = false;
 
 if (issDetect()) {
   state.issMode = true;
@@ -755,7 +784,7 @@ function issInit(){
   const vi = iss.views.indexOf(v);
   if (vi >= 0) iss.viewIndex = vi;
 
-  // Hotkeys.
+  // Hotkeys. (Backquote is intentionally undocumented — operator-only.)
   document.addEventListener('keydown', (e) => {
     if (!state.issMode) return;
     if (e.code === 'KeyV') {
@@ -772,12 +801,46 @@ function issInit(){
         renderer.setScissorTest(false);
       }
       e.preventDefault();
+    } else if (e.code === 'Backquote') {
+      // === SECRET FREE-CAM TOGGLE ===
+      // Lets the operator fly the camera (WASD + mouselook + Shift boost)
+      // while keeping the real-GMST Earth + real Sun + live VIIRS clouds.
+      // No on-screen indicator — viewers see only the camera move.
+      iss.freeCam = !iss.freeCam;
+      document.body.classList.toggle('iss-freecam', iss.freeCam);
+      if (iss.freeCam) {
+        // Smooth handoff: seed observer pose + velocity from current ISS state.
+        observer.worldPos.copy(iss._scenePos);
+        observer.worldVel.copy(iss._sceneVel);
+        observer.gaze.copy(spaceCamera.quaternion);
+        observer.lockTarget = null;
+        if (iss.splitMode !== 0) {
+          // Leave any split layout so the single free-cam view fills frame.
+          iss.splitMode = 0;
+          document.body.classList.remove('split2', 'split4');
+          post.composer.setSize(innerWidth, innerHeight);
+          renderer.setViewport(0, 0, innerWidth, innerHeight);
+          renderer.setScissorTest(false);
+        }
+        if (!state.pointerLocked) {
+          try { renderer.domElement.requestPointerLock(); } catch (_) {}
+        }
+      } else {
+        if (state.pointerLocked) {
+          try { document.exitPointerLock(); } catch (_) {}
+        }
+      }
+      e.preventDefault();
     }
   });
 
   // Live TLE refresh — fire and forget, retry every 6h.
   issRefreshTLE();
   setInterval(issRefreshTLE, 6 * 3600 * 1000);
+  // Live clouds from NASA GIBS — fire and forget. Falls back to the static
+  // cloud texture on error; refreshed every 6h.
+  issLoadLiveClouds();
+  setInterval(issLoadLiveClouds, GIBS_REFRESH_MS);
   // Kick off the right-panel cycler.
   issStartCycler();
 }
@@ -900,9 +963,111 @@ function issAimCamera(viewName){
   spaceCamera.fov = 70;
 }
 
+async function issLoadLiveClouds(){
+  if (_issCloudsLoading) return false;
+  _issCloudsLoading = true;
+  // Composite size — downscale z=3 native (5120×2560) to 4096×2048 so GPU
+  // memory matches the existing static cloud texture. Each tile renders at
+  // tileW × tileH px on the destination canvas.
+  const W = 4096, H = 2048;
+  const tileW = W / GIBS_COLS;          // 409.6 px
+  const tileH = H / GIBS_ROWS;          // 409.6 px
+  // Try today first, fall back up to 4 days (handles VIIRS processing lag).
+  const dates = [];
+  const t0 = Date.now();
+  for (let i = 0; i < 5; i++) {
+    dates.push(new Date(t0 - i * 86400000).toISOString().slice(0, 10));
+  }
+  for (const date of dates) {
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = W; canvas.height = H;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, W, H);
+      const fetches = [];
+      for (let row = 0; row < GIBS_ROWS; row++) {
+        for (let col = 0; col < GIBS_COLS; col++) {
+          fetches.push((async () => {
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            const url = 'https://gibs.earthdata.nasa.gov/wmts/epsg4326/best/'
+              + GIBS_LAYER + '/default/' + date + '/' + GIBS_MATRIX
+              + '/' + GIBS_ZOOM + '/' + row + '/' + col + '.jpg';
+            await new Promise((res, rej) => {
+              img.onload = res;
+              img.onerror = () => rej(new Error('tile ' + row + '/' + col));
+              img.src = url;
+            });
+            ctx.drawImage(img, col * tileW, row * tileH, tileW, tileH);
+          })());
+        }
+      }
+      await Promise.all(fetches);
+      // Per-pixel cloud extraction. Clouds = bright AND low-saturation.
+      // Output: grayscale where v=255 is opaque cloud, v=0 is no cloud —
+      // matching the format of the existing earth_8k_clouds.jpg so the
+      // existing shader's luminance-derived alpha continues to work.
+      const imgData = ctx.getImageData(0, 0, W, H);
+      const px = imgData.data;
+      for (let i = 0; i < px.length; i += 4) {
+        const r = px[i], g = px[i+1], b = px[i+2];
+        const brightness = (r + g + b) / 3;
+        const mx = Math.max(r, g, b);
+        const mn = Math.min(r, g, b);
+        const sat = mx > 0 ? (mx - mn) / mx : 0;
+        let p = 0;
+        if (brightness > 130) {
+          p = Math.min(1, (brightness - 130) / 90) * Math.max(0, 1 - sat * 2.2);
+        }
+        const v = Math.round(p * 255);
+        px[i] = v; px[i+1] = v; px[i+2] = v; px[i+3] = 255;
+      }
+      ctx.putImageData(imgData, 0, 0);
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.ClampToEdgeWrapping;
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.anisotropy = 4;
+      tex.needsUpdate = true;
+      if (groups.earthClouds && groups.earthClouds.material) {
+        groups.earthClouds.material.map = tex;
+        groups.earthClouds.material.needsUpdate = true;
+      }
+      _issCloudsLoaded = true;
+      _issCloudsLoading = false;
+      console.log('[ISS] live clouds loaded from', date);
+      return true;
+    } catch (e) {
+      console.warn('[ISS] GIBS clouds failed for', date, e.message || e);
+    }
+  }
+  _issCloudsLoading = false;
+  return false;
+}
+
 // Single-or-split frame render. Replaces the bare `post.composer.render()`
 // when state.issMode is true.
 function issRenderFrame(){
+  // Lock clouds + cirrus to surface rotation so live GIBS clouds appear at
+  // correct geographic positions. Existing observer/ship modes leave the
+  // 1.18×/0.62× parallax drift untouched.
+  if (groups.earthClouds) groups.earthClouds.rotation.y = groups.earth.rotation.y;
+  if (groups.earthCirrus) groups.earthCirrus.rotation.y = groups.earth.rotation.y;
+  if (groups.earth.material.userData && groups.earth.material.userData.uCloudRotY) {
+    groups.earth.material.userData.uCloudRotY.value = groups.earth.rotation.y;
+  }
+  if (iss.freeCam) {
+    // Observer-mode camera already set by updateCamera. Render single full-
+    // frame view. (Split-screen is force-disabled when entering freeCam.)
+    spaceCamera.aspect = innerWidth / innerHeight;
+    spaceCamera.updateProjectionMatrix();
+    post.composer.setSize(innerWidth, innerHeight);
+    renderer.setScissorTest(false);
+    renderer.setViewport(0, 0, innerWidth, innerHeight);
+    post.composer.render();
+    return;
+  }
   if (iss.splitMode === 0) {
     issAimCamera(iss.views[iss.viewIndex]);
     spaceCamera.aspect = innerWidth / innerHeight;
@@ -4883,12 +5048,27 @@ function frame(now){
   }
   if(!state.paused && state.controlsEnabled){
     if(state.issMode){
-      // ISS lock: bind simTime to real GMST so updateSpaceObjects rotates
-      // Earth to the correct sidereal angle without any further override,
-      // then override body positions for an Earth-centric ISS-altitude view.
+      // GMST always pinned to real time (drives Earth rotation in
+      // updateSpaceObjects). Sun direction always overridden to the real
+      // ecliptic Sun. Body positions overridden so the cloud-locked Earth
+      // is centered at the world origin.
       const _gmst = satellite.gstime(new Date());
       state.simTime = (_gmst / (2 * Math.PI)) * 86164;
-      issPreStep();
+      if (iss.freeCam) {
+        // Free-cam: keep real Earth + Sun, but let observer physics drive
+        // the camera. Skip issPreStep's observer.worldPos snap so WASD/mouse
+        // input integrates uninterrupted.
+        bodies.earth.pos.set(0, 0, 0);
+        bodies.earth.vel.set(0, 0, 0);
+        issSunDirScene(new Date(), iss._sunDir);
+        bodies.sun.pos.copy(iss._sunDir).multiplyScalar(AU);
+        bodies.sun.vel.set(0, 0, 0);
+        bodies.moon.pos.copy(iss._sunDir).multiplyScalar(1.2 * AU);
+        bodies.moon.vel.set(0, 0, 0);
+        stepObserver(realDt);
+      } else {
+        issPreStep();
+      }
     } else if(state.mode === 'observer'){
       // Advance bodies & sim time, but skip ship rotation/thrust + avatar logic.
       state.lastSimDt = simDt;
@@ -5622,12 +5802,11 @@ function toggleCentrifuge(){
 }
 
 function updateCamera(){
-  if(state.issMode){
-    // Aim the camera now (before updateSpaceObjects + updateSunScreen) so the
-    // sun-screen / bloom / diffraction post-FX run against the correct camera
-    // matrix. In split-screen, this sets the FIRST panel's view; the per-
-    // panel re-aim inside issRenderFrame still works, but the lens-flare
-    // sun-screen reflects whichever camera was last set here.
+  if(state.issMode && !iss.freeCam){
+    // ISS lock: aim the camera now (before updateSpaceObjects + updateSunScreen)
+    // so the sun-screen / bloom / diffraction post-FX run against the correct
+    // camera matrix. In free-cam, we fall through to the observer-mode camera
+    // path below so WASD + mouselook control orientation normally.
     if (iss.satrec) {
       const now = new Date();
       if (issPropagate(now, iss._scenePos, iss._sceneVel)) {
