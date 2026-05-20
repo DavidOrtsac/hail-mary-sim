@@ -1075,13 +1075,14 @@ async function issLoadLiveClouds(){
     }
 
     // === Stage 1: noise-floor subtraction + gamma boost ====================
-    // Aggressive opacity curve: gamma 0.30 punches mid-tones up to ~85%
-    // opacity so clouds read assertively dense, not vapor-thin. Noise floor
-    // 10 captures very faint clouds that would otherwise clip to zero.
+    // Noise floor 70 fully suppresses sunlit ocean and dark land (which peak
+    // around 60-70 brightness in GMGSI VIS) so they don't register as cloud.
+    // Gamma 0.50 lifts the remaining cloud signal into assertive opacity:
+    // thin clouds ~140 alpha, mid ~195, thick ~230.
     const tmp = new Uint8Array(GMGSI_W * GMGSI_H);
     for (let i = 0, t = 0; i < px.length; i += 4, t++) {
-      const norm = Math.max(0, px[i] - 10) / 245;
-      const boosted = Math.pow(Math.min(1, norm), 0.30);
+      const norm = Math.max(0, px[i] - 70) / 185;
+      const boosted = Math.pow(Math.min(1, norm), 0.50);
       tmp[t] = Math.round(boosted * 255);
     }
 
