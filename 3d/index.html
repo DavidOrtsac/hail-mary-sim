@@ -976,12 +976,15 @@ async function _issFetchTile(col, row, hourBucket){
   const latMax = 90 - row * 45;
   const latMin = latMax - 45;
   const bbox = latMin + ',' + lonMin + ',' + latMax + ',' + lonMax;
+  // PNG (lossless) instead of JPEG — avoids 8x8 DCT block artifacts that
+  // were visible as 'blockiness' at this resolution. ~3.5 MB per tile vs
+  // ~500 KB JPEG (~7x more bandwidth), but only once per refresh cycle.
   const url = 'https://nowcoast.noaa.gov/geoserver/satellite/wms?'
     + 'SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap'
     + '&LAYERS=' + GMGSI_LAYER
     + '&CRS=EPSG:4326&BBOX=' + bbox
     + '&WIDTH=' + TILE_W + '&HEIGHT=' + TILE_H
-    + '&FORMAT=image/jpeg&_=' + hourBucket;
+    + '&FORMAT=image/png&_=' + hourBucket;
   const img = new Image();
   img.crossOrigin = 'anonymous';
   await new Promise((res, rej) => {
@@ -1074,6 +1077,69 @@ async function issLoadLiveClouds(){
       const v = Math.round(boosted * 255);
       px[i] = 255; px[i+1] = 255; px[i+2] = 255; px[i+3] = v;
       if (v > 50) cloudPixels++;
+    }
+
+    // === Stage 2: Targeted seam smoothing at tile boundaries ==============
+    // Tile-stitched mosaics show visible brightness steps at the boundaries
+    // between independently rendered NOAA tiles (each tile is calibrated
+    // differently per geostationary satellite contributing data). Apply a
+    // narrow 1D Gaussian blur (sigma=5, radius=16) perpendicular to each
+    // known seam location so the step gets distributed over ~30 pixels.
+    // Total ops ~10M (cheap). Real cloud features span many more pixels so
+    // they're not visually softened by this localized blur.
+    const aScratch = new Uint8Array(GMGSI_W * GMGSI_H);
+    for (let i = 0, t = 0; i < px.length; i += 4, t++) aScratch[t] = px[i + 3];
+    // Precompute Gaussian weights (sigma=5, ±16 radius).
+    const SIGMA2_INV = 1 / (2 * 5 * 5);
+    const KR = 16;                                  // kernel radius
+    const KSIZE = KR * 2 + 1;
+    const kernel = new Float32Array(KSIZE);
+    let kSum = 0;
+    for (let k = -KR; k <= KR; k++) {
+      const w = Math.exp(-k * k * SIGMA2_INV);
+      kernel[k + KR] = w; kSum += w;
+    }
+    for (let k = 0; k < KSIZE; k++) kernel[k] /= kSum;
+    // Vertical seams: at canvas x = TILE_W, 2*TILE_W, 3*TILE_W. Smooth in
+    // the horizontal direction over ±KR columns around each seam.
+    const verticalSeams = [TILE_W, 2 * TILE_W, 3 * TILE_W];
+    for (const xs of verticalSeams) {
+      const cBand = []; for (let dc = -KR; dc <= KR; dc++) cBand.push(xs + dc);
+      for (let row = 0; row < GMGSI_H; row++) {
+        const baseR = row * GMGSI_W;
+        for (const c of cBand) {
+          if (c < 0 || c >= GMGSI_W) continue;
+          let sum = 0;
+          for (let k = -KR; k <= KR; k++) {
+            const cc = c + k;
+            if (cc < 0) continue;
+            if (cc >= GMGSI_W) continue;
+            sum += aScratch[baseR + cc] * kernel[k + KR];
+          }
+          px[(baseR + c) * 4 + 3] = Math.round(sum);
+        }
+      }
+    }
+    // Horizontal seams: at canvas y = TILE_H, 2*TILE_H, 3*TILE_H.
+    // Refresh scratch after vertical-seam pass to read the smoothed cols.
+    for (let i = 0, t = 0; i < px.length; i += 4, t++) aScratch[t] = px[i + 3];
+    const horizontalSeams = [TILE_H, 2 * TILE_H, 3 * TILE_H];
+    for (const ys of horizontalSeams) {
+      const rBand = []; for (let dr = -KR; dr <= KR; dr++) rBand.push(ys + dr);
+      for (const r of rBand) {
+        if (r < 0 || r >= GMGSI_H) continue;
+        const baseR = r * GMGSI_W;
+        for (let col = 0; col < GMGSI_W; col++) {
+          let sum = 0;
+          for (let k = -KR; k <= KR; k++) {
+            const rr = r + k;
+            if (rr < 0) continue;
+            if (rr >= GMGSI_H) continue;
+            sum += aScratch[rr * GMGSI_W + col] * kernel[k + KR];
+          }
+          px[(baseR + col) * 4 + 3] = Math.round(sum);
+        }
+      }
     }
     ctx.putImageData(imgData, 0, 0);
     console.log('[ISS] 16K processed in', ((performance.now()-procStart)/1000).toFixed(1) + 's');
