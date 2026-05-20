@@ -996,14 +996,23 @@ async function issLoadLiveClouds(){
     const px = imgData.data;
 
     // === Stage 0: Mosaic-boundary cleanup =================================
-    // NOAA encodes the GMGSI antimeridian boundary (lon = +/-180 deg) as a
-    // pair of near-white "no-data" columns at col 0 and col 4095, with
-    // brightness ~252/255 (vs ~66 baseline). With RepeatWrapping the two
-    // edges wrap to the same point on the sphere, producing a bright
-    // vertical streak that the bloom post-FX amplifies into a laser-like
-    // artifact. Detect bright outlier columns from data (so we self-correct
-    // if NOAA changes the pattern) and replace them with horizontal-linear
-    // interpolation from the nearest non-outlier neighbors (with wrap).
+    // NOAA encodes the GMGSI antimeridian boundary (lon = +/-180 deg) as
+    // near-white "no-data" columns (mean ~252/255). With RepeatWrapping
+    // these wrap to a sharp bright vertical line that bloom amplifies into
+    // a laser-streak.
+    //
+    // Detection MUST be robust to the day/night gradient: when half the
+    // Earth is in shadow, daytime column-means run 3-4x higher than night,
+    // so a naive "global median × 1.5" threshold flags every daytime
+    // column as an outlier (→ barcode artifact).
+    //
+    // Two conditions, BOTH required:
+    //   (a) absolute column mean > 200/255 — real Earth column-means
+    //       (averaged over 2048 lat pixels including dark polar/no-data
+    //       bands) cap around ~190 even fully sunlit; >200 is artificial
+    //   (b) > 1.8x LOCAL median (median of ±10 surrounding columns) —
+    //       day/night gradient is smooth, so local median tracks the
+    //       column's real brightness; an abrupt jump is artifact
     {
       const colMeans = new Float32Array(GMGSI_W);
       for (let row = 0; row < GMGSI_H; row++) {
@@ -1013,24 +1022,33 @@ async function issLoadLiveClouds(){
         }
       }
       for (let c = 0; c < GMGSI_W; c++) colMeans[c] /= GMGSI_H;
-      // Baseline = median of column means (robust to the outliers themselves)
-      const sortedMeans = Float32Array.from(colMeans).sort();
-      const baseline = sortedMeans[GMGSI_W >> 1];
       const isOutlier = new Uint8Array(GMGSI_W);
       let outlierCount = 0;
+      const WIN = 10;
+      const buf = new Float32Array(WIN * 2);  // ±WIN excluding self
       for (let c = 0; c < GMGSI_W; c++) {
-        if (colMeans[c] > baseline * 1.5) { isOutlier[c] = 1; outlierCount++; }
+        if (colMeans[c] <= 200) continue;     // (a) absolute threshold
+        let n = 0;
+        for (let dc = -WIN; dc <= WIN; dc++) {
+          if (dc === 0) continue;
+          buf[n++] = colMeans[(c + dc + GMGSI_W) % GMGSI_W];
+        }
+        // Sort just the populated slice and take median
+        const slice = buf.subarray(0, n);
+        slice.sort();
+        const localMed = slice[n >> 1];
+        if (colMeans[c] > localMed * 1.8) {
+          isOutlier[c] = 1; outlierCount++;
+        }
       }
       if (outlierCount > 0) {
         for (let c = 0; c < GMGSI_W; c++) {
           if (!isOutlier[c]) continue;
-          // Walk left until we find a non-outlier column (wrap-around).
           let leftCol = -1;
           for (let dc = 1; dc < GMGSI_W; dc++) {
             const tc = (c - dc + GMGSI_W) % GMGSI_W;
             if (!isOutlier[tc]) { leftCol = tc; break; }
           }
-          // Walk right.
           let rightCol = -1;
           for (let dc = 1; dc < GMGSI_W; dc++) {
             const tc = (c + dc) % GMGSI_W;
@@ -1047,7 +1065,7 @@ async function issLoadLiveClouds(){
           }
         }
         console.log('[ISS] GMGSI mosaic cleanup: removed', outlierCount,
-          'outlier column(s) at the antimeridian boundary');
+          'outlier column(s)');
       }
     }
 
