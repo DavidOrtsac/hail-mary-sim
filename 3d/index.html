@@ -755,15 +755,15 @@ function issDetect(){
 // hourly vs daily updates, multi-satellite mosaic vs single-overpass snapshot.
 // Free, public, no API key, no registration.
 const GMGSI_LAYER = 'global_visible_imagery_mosaic';
-const GMGSI_W = 4096, GMGSI_H = 2048;
-const GMGSI_URL =
-  'https://nowcoast.noaa.gov/geoserver/satellite/wms?' +
-  'SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap' +
-  '&LAYERS=' + GMGSI_LAYER +
-  '&CRS=EPSG:4326&BBOX=-90,-180,90,180' +
-  '&WIDTH=' + GMGSI_W + '&HEIGHT=' + GMGSI_H +
-  '&FORMAT=image/jpeg';
-const GMGSI_REFRESH_MS = 30 * 60 * 1000;       // 30 min — covers hourly publish
+// 16K composite stitched from a 4x4 grid of regional WMS requests.
+// nowCOAST's GeoServer per-request memory cap is ~64 MB, so each tile is
+// 4096x2048 (33 MB), and 16 of them tile to a 16384x8192 global mosaic.
+// Bandwidth ~8 MB, fetch ~30-60s parallel, GPU texture ~512 MB (no mipmaps).
+const TILE_W = 4096, TILE_H = 2048;
+const GRID_COLS = 4, GRID_ROWS = 4;
+const GMGSI_W = TILE_W * GRID_COLS;     // 16384
+const GMGSI_H = TILE_H * GRID_ROWS;     // 8192
+const GMGSI_REFRESH_MS = 30 * 60 * 1000;
 let _issCloudsLoading = false;
 let _issCloudsLoaded = false;
 
@@ -970,183 +970,136 @@ function issAimCamera(viewName){
   spaceCamera.fov = 70;
 }
 
+async function _issFetchTile(col, row, hourBucket){
+  const lonMin = -180 + col * 90;
+  const lonMax = lonMin + 90;
+  const latMax = 90 - row * 45;
+  const latMin = latMax - 45;
+  const bbox = latMin + ',' + lonMin + ',' + latMax + ',' + lonMax;
+  const url = 'https://nowcoast.noaa.gov/geoserver/satellite/wms?'
+    + 'SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap'
+    + '&LAYERS=' + GMGSI_LAYER
+    + '&CRS=EPSG:4326&BBOX=' + bbox
+    + '&WIDTH=' + TILE_W + '&HEIGHT=' + TILE_H
+    + '&FORMAT=image/jpeg&_=' + hourBucket;
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  await new Promise((res, rej) => {
+    img.onload = res;
+    img.onerror = () => rej(new Error('tile ' + col + '/' + row + ' failed'));
+    img.src = url;
+  });
+  return img;
+}
+
 async function issLoadLiveClouds(){
   if (_issCloudsLoading) return false;
   _issCloudsLoading = true;
+  // GPU sanity check — if the device doesn't support 16K textures, abort
+  // and keep the static cloud fallback.
   try {
-    // Cache-buster keyed to the current hour — so refreshing within a single
-    // hour gets the cached image, but next hour pulls fresh data.
+    const gl = renderer.getContext();
+    const maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+    if (maxTex < GMGSI_W) {
+      console.warn('[ISS] GPU MAX_TEXTURE_SIZE=' + maxTex
+        + ' < required ' + GMGSI_W + ', skipping live clouds');
+      _issCloudsLoading = false;
+      return false;
+    }
+  } catch (e) { /* fall through */ }
+  try {
+    const t0 = performance.now();
     const hourBucket = Math.floor(Date.now() / 3600000);
-    const url = GMGSI_URL + '&_=' + hourBucket;
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    await new Promise((res, rej) => {
-      img.onload = res;
-      img.onerror = () => rej(new Error('GMGSI fetch failed (network/CORS)'));
-      img.src = url;
-    });
+    // Fetch all 16 regional tiles in parallel — browser caps ~6 concurrent
+    // per origin so this overlaps fetch + decode.
     const canvas = document.createElement('canvas');
     canvas.width = GMGSI_W; canvas.height = GMGSI_H;
     const ctx = canvas.getContext('2d');
-    ctx.drawImage(img, 0, 0, GMGSI_W, GMGSI_H);
-    // Process — GMGSI VIS is grayscale where bright = sunlight reflected by
-    // clouds/snow/sand. Subtract noise floor (~25/255 over dark ocean), then
-    // gamma 0.55 boost so thin clouds register visibly.
+    const tilePromises = [];
+    for (let row = 0; row < GRID_ROWS; row++) {
+      for (let col = 0; col < GRID_COLS; col++) {
+        const _col = col, _row = row;
+        tilePromises.push(
+          _issFetchTile(_col, _row, hourBucket).then(img => {
+            ctx.drawImage(img, _col * TILE_W, _row * TILE_H, TILE_W, TILE_H);
+          })
+        );
+      }
+    }
+    await Promise.all(tilePromises);
+    console.log('[ISS] 16K mosaic stitched in', ((performance.now()-t0)/1000).toFixed(1) + 's');
+    // Pixel processing on a 16K canvas: 134M pixels, must stay efficient.
+    // We do ONE combined pass (noise floor + gamma + white-RGB encoding)
+    // and skip the median/vertical-blur passes from the 4K pipeline — those
+    // would take 10+ seconds at this resolution. Tile-based fetching means
+    // we don't have to worry about inter-satellite seams within tiles, and
+    // antimeridian no-data markers only appear at the canvas left/right
+    // edges, which we fix directly below before the main pass.
     const imgData = ctx.getImageData(0, 0, GMGSI_W, GMGSI_H);
     const px = imgData.data;
+    const procStart = performance.now();
 
-    // === Stage 0: Mosaic-boundary cleanup =================================
-    // NOAA encodes the GMGSI antimeridian boundary (lon = +/-180 deg) as
-    // near-white "no-data" columns (mean ~252/255). With RepeatWrapping
-    // these wrap to a sharp bright vertical line that bloom amplifies into
-    // a laser-streak.
-    //
-    // Detection MUST be robust to the day/night gradient: when half the
-    // Earth is in shadow, daytime column-means run 3-4x higher than night,
-    // so a naive "global median × 1.5" threshold flags every daytime
-    // column as an outlier (→ barcode artifact).
-    //
-    // Two conditions, BOTH required:
-    //   (a) absolute column mean > 200/255 — real Earth column-means
-    //       (averaged over 2048 lat pixels including dark polar/no-data
-    //       bands) cap around ~190 even fully sunlit; >200 is artificial
-    //   (b) > 1.8x LOCAL median (median of ±10 surrounding columns) —
-    //       day/night gradient is smooth, so local median tracks the
-    //       column's real brightness; an abrupt jump is artifact
-    {
-      const colMeans = new Float32Array(GMGSI_W);
-      for (let row = 0; row < GMGSI_H; row++) {
-        const baseR = row * GMGSI_W;
-        for (let col = 0; col < GMGSI_W; col++) {
-          colMeans[col] += px[(baseR + col) * 4];
-        }
-      }
-      for (let c = 0; c < GMGSI_W; c++) colMeans[c] /= GMGSI_H;
-      const isOutlier = new Uint8Array(GMGSI_W);
-      let outlierCount = 0;
-      const WIN = 10;
-      const buf = new Float32Array(WIN * 2);  // ±WIN excluding self
-      // Absolute threshold lowered to 130 to catch the boundary-adjacent
-      // columns (cols 1 and 4094) whose means run ~150 — too bright to be
-      // real geographic variation but previously below the 200 floor, so
-      // they slipped through and rendered as a dashed bloomed line. The
-      // local-median check (>1.8x of ±10 cols) protects against false-
-      // positives on the day/night brightness ramp where ratios stay <1.5.
-      for (let c = 0; c < GMGSI_W; c++) {
-        if (colMeans[c] <= 130) continue;     // (a) absolute threshold
-        let n = 0;
-        for (let dc = -WIN; dc <= WIN; dc++) {
-          if (dc === 0) continue;
-          buf[n++] = colMeans[(c + dc + GMGSI_W) % GMGSI_W];
-        }
-        const slice = buf.subarray(0, n);
-        slice.sort();
-        const localMed = slice[n >> 1];
-        if (colMeans[c] > localMed * 1.8) {
-          isOutlier[c] = 1; outlierCount++;
-        }
-      }
-      if (outlierCount > 0) {
-        for (let c = 0; c < GMGSI_W; c++) {
-          if (!isOutlier[c]) continue;
-          let leftCol = -1;
-          for (let dc = 1; dc < GMGSI_W; dc++) {
-            const tc = (c - dc + GMGSI_W) % GMGSI_W;
-            if (!isOutlier[tc]) { leftCol = tc; break; }
-          }
-          let rightCol = -1;
-          for (let dc = 1; dc < GMGSI_W; dc++) {
-            const tc = (c + dc) % GMGSI_W;
-            if (!isOutlier[tc]) { rightCol = tc; break; }
-          }
-          if (leftCol < 0 || rightCol < 0) continue;
-          for (let row = 0; row < GMGSI_H; row++) {
-            const baseR = row * GMGSI_W;
-            const lv = px[(baseR + leftCol) * 4];
-            const rv = px[(baseR + rightCol) * 4];
-            const v = (lv + rv) >> 1;
-            const i = (baseR + c) * 4;
-            px[i] = v; px[i+1] = v; px[i+2] = v;
-          }
-        }
-        console.log('[ISS] GMGSI mosaic cleanup: removed', outlierCount,
-          'outlier column(s)');
-      }
+    // === Stage 0: Antimeridian no-data markers ============================
+    // NOAA's WMS adds near-white (~252/255) "no-data" pixels in the leftmost
+    // and rightmost columns whenever a request bbox touches +/-180 longitude.
+    // For tile-based stitching, that means canvas col 0/1 (from the leftmost
+    // tile col=0) and col W-1/W-2 (from the rightmost tile col=3). Patch
+    // them with the inner valid columns to avoid the bloomed seam at the
+    // antimeridian wrap.
+    for (let row = 0; row < GMGSI_H; row++) {
+      const baseR = row * GMGSI_W * 4;
+      // Left edge: use col 2 as the valid neighbor.
+      const lv = px[baseR + 8];
+      px[baseR + 0] = lv; px[baseR + 1] = lv; px[baseR + 2] = lv;
+      px[baseR + 4] = lv; px[baseR + 5] = lv; px[baseR + 6] = lv;
+      // Right edge: use col W-3 as the valid neighbor.
+      const rOff = baseR + (GMGSI_W - 1) * 4;
+      const rv = px[rOff - 8];
+      px[rOff + 0] = rv; px[rOff + 1] = rv; px[rOff + 2] = rv;
+      px[rOff - 4] = rv; px[rOff - 3] = rv; px[rOff - 2] = rv;
     }
 
-    // === Stage 1: noise-floor subtraction + gamma boost ====================
-    // Noise floor 70 fully suppresses sunlit ocean and dark land (which peak
-    // around 60-70 brightness in GMGSI VIS) so they don't register as cloud.
-    // Gamma 0.50 lifts the remaining cloud signal into assertive opacity:
-    // thin clouds ~140 alpha, mid ~195, thick ~230.
-    const tmp = new Uint8Array(GMGSI_W * GMGSI_H);
-    for (let i = 0, t = 0; i < px.length; i += 4, t++) {
+    // === Stage 1: Combined noise floor + gamma + white-RGB encoding ========
+    // ONE pass over 134M pixels for the whole pipeline. Noise floor 70 hard-
+    // suppresses sunlit ocean and dark land. Gamma 0.50 lifts cloud mid-
+    // tones into assertive opacity. RGB stays pure white at every pixel —
+    // when the new MeshLambertMaterial samples it, the scene's directional
+    // sun light modulates the visible brightness (dark on the night side,
+    // bright on the day side), so we don't need to dim the cloud RGB
+    // ourselves.
+    let cloudPixels = 0;
+    for (let i = 0; i < px.length; i += 4) {
       const norm = Math.max(0, px[i] - 70) / 185;
       const boosted = Math.pow(Math.min(1, norm), 0.50);
-      tmp[t] = Math.round(boosted * 255);
-    }
-
-    // === Stage 2: 3-tap horizontal median (catches any residual spikes) ===
-    const med3 = (a, b, c) => Math.max(Math.min(a, b), Math.min(Math.max(a, b), c));
-    for (let row = 0; row < GMGSI_H; row++) {
-      const base = row * GMGSI_W;
-      for (let col = 0; col < GMGSI_W; col++) {
-        const t = base + col;
-        const c = tmp[t];
-        const l = col > 0          ? tmp[t - 1] : tmp[base + GMGSI_W - 1];
-        const r = col < GMGSI_W - 1 ? tmp[t + 1] : tmp[base];
-        const out = med3(l, c, r);
-        const i = t * 4;
-        px[i] = out; px[i+1] = out; px[i+2] = out; px[i+3] = 255;
-      }
-    }
-
-    // === Stage 3: 3-tap vertical Gaussian-like blur ========================
-    // GMGSI is a mosaic of 5 geostationary satellites; at high latitudes
-    // their coverage zones meet, and inter-satellite calibration produces a
-    // multi-row brightness step that reads as a faint horizontal-ish line
-    // across the rendered Earth. Median doesn't help (it PRESERVES edges).
-    // A center-weighted [1,2,1]/4 vertical blur softens the step over 3
-    // rows (~5 arc-minutes on the texture) without significantly blurring
-    // cloud features, which span many more rows than 3.
-    // Reuse tmp as the scratch buffer (read-source) by copying current px.
-    for (let i = 0, t = 0; i < px.length; i += 4, t++) tmp[t] = px[i];
-    let cloudPixels = 0;
-    for (let row = 0; row < GMGSI_H; row++) {
-      const base = row * GMGSI_W;
-      for (let col = 0; col < GMGSI_W; col++) {
-        const t = base + col;
-        const c = tmp[t];
-        const u = row > 0           ? tmp[t - GMGSI_W] : c;
-        const d = row < GMGSI_H - 1 ? tmp[t + GMGSI_W] : c;
-        const v = (u + 2 * c + d + 2) >> 2;     // [1,2,1]/4 with rounding
-        // Pure-white RGB with cloud signal as alpha. Without this, clouds
-        // render as gray (RGB = signal multiplied by white in shader = gray)
-        // and look washed-out / vapor-thin. White RGB + alpha-only gives
-        // assertive bright clouds at the gamma-boosted opacity.
-        const i = t * 4;
-        px[i] = 255; px[i+1] = 255; px[i+2] = 255; px[i+3] = v;
-        if (v > 50) cloudPixels++;
-      }
+      const v = Math.round(boosted * 255);
+      px[i] = 255; px[i+1] = 255; px[i+2] = 255; px[i+3] = v;
+      if (v > 50) cloudPixels++;
     }
     ctx.putImageData(imgData, 0, 0);
+    console.log('[ISS] 16K processed in', ((performance.now()-procStart)/1000).toFixed(1) + 's');
     const tex = new THREE.CanvasTexture(canvas);
     tex.wrapS = THREE.RepeatWrapping;
     tex.wrapT = THREE.ClampToEdgeWrapping;
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.anisotropy = 4;
+    // CRITICAL at 16K: disable mipmaps. Mipmaps for a 16384x8192 RGBA
+    // texture would add ~170 MB extra GPU memory on top of the base 512 MB.
+    // LinearFilter (no mip) is what we want since the cloud sphere always
+    // renders close to texture-native resolution from any orbital angle.
+    tex.generateMipmaps = false;
+    tex.minFilter = THREE.LinearFilter;
     tex.needsUpdate = true;
-    // FORCE-REPLACE the cloud material. The existing pipeline upgrades the
-    // cloud material to a cube-map shader (samplerCube uniforms, no .map)
-    // shortly after init; just setting material.map on that upgraded
-    // material is silently dropped. A fresh MeshBasicMaterial guarantees
-    // the swap actually takes effect. Trade-off: we lose the cube shader's
-    // cloud shading — acceptable for ISS mode where the cloud layer IS the
-    // focal point and the underlying Earth shader still handles day/night.
+    // FORCE-REPLACE the cloud material with MeshLambertMaterial. The previous
+    // MeshBasicMaterial ignored the scene's directional sun light entirely,
+    // so clouds rendered at full white-opacity on both day and night sides
+    // (the "clouds make their own light" bug). MeshLambertMaterial multiplies
+    // map.rgb by dot(normal, sun_dir) clamped [0,1], so:
+    //   - Day side: pure-white RGB * 1.0 = bright white clouds
+    //   - Night side: pure-white RGB * ~0  = dark / invisible clouds
+    // This is what real ISS feeds show — cloud tops glow on the lit half,
+    // disappear into the night half.
     if (groups.earthClouds) {
-      // alpha comes from map.a (no alphaMap), so cloud RGB stays pure white
-      // and the texture's encoded alpha controls opacity directly.
-      groups.earthClouds.material = new THREE.MeshBasicMaterial({
+      groups.earthClouds.material = new THREE.MeshLambertMaterial({
         map: tex,
         transparent: true,
         opacity: 1.0,
