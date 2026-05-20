@@ -1026,14 +1026,19 @@ async function issLoadLiveClouds(){
       let outlierCount = 0;
       const WIN = 10;
       const buf = new Float32Array(WIN * 2);  // ±WIN excluding self
+      // Absolute threshold lowered to 130 to catch the boundary-adjacent
+      // columns (cols 1 and 4094) whose means run ~150 — too bright to be
+      // real geographic variation but previously below the 200 floor, so
+      // they slipped through and rendered as a dashed bloomed line. The
+      // local-median check (>1.8x of ±10 cols) protects against false-
+      // positives on the day/night brightness ramp where ratios stay <1.5.
       for (let c = 0; c < GMGSI_W; c++) {
-        if (colMeans[c] <= 200) continue;     // (a) absolute threshold
+        if (colMeans[c] <= 130) continue;     // (a) absolute threshold
         let n = 0;
         for (let dc = -WIN; dc <= WIN; dc++) {
           if (dc === 0) continue;
           buf[n++] = colMeans[(c + dc + GMGSI_W) % GMGSI_W];
         }
-        // Sort just the populated slice and take median
         const slice = buf.subarray(0, n);
         slice.sort();
         const localMed = slice[n >> 1];
