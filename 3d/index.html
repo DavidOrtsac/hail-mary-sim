@@ -1075,10 +1075,13 @@ async function issLoadLiveClouds(){
     }
 
     // === Stage 1: noise-floor subtraction + gamma boost ====================
+    // Gamma 0.40 (was 0.55) gives thicker mid-tone opacity so clouds read as
+    // realistically dense, not vapor-thin. Noise floor 18 (was 25) lets very
+    // faint clouds register at all instead of getting clipped to zero.
     const tmp = new Uint8Array(GMGSI_W * GMGSI_H);
     for (let i = 0, t = 0; i < px.length; i += 4, t++) {
-      const norm = Math.max(0, px[i] - 25) / 230;
-      const boosted = Math.pow(Math.min(1, norm), 0.55);
+      const norm = Math.max(0, px[i] - 18) / 237;
+      const boosted = Math.pow(Math.min(1, norm), 0.40);
       tmp[t] = Math.round(boosted * 255);
     }
 
@@ -5212,6 +5215,33 @@ function frame(now){
   // uniforms object on construction, so we must reach into pass.uniforms
   // (not our local-side references) to update them every frame.
   updateSunScreen();
+  // Belt-and-suspenders eclipse check (ISS mode only). The existing sphere-
+  // cap occlusion math in updateSunScreen has been observed to leak the lens
+  // flare through the night side — likely float precision when Earth sits
+  // at world origin and the two unit vectors nearly coincide.
+  //
+  // Use ray-sphere intersection on the sun-ray from the ship's position.
+  // Quadratic: t^2 + 2*b*t + c = 0 where b = oc . sunDir, c = |oc|^2 - R^2.
+  // If a real root exists in (0, sunDist), the ray crosses Earth's volume
+  // before reaching the sun → eclipse → force-zero the lens flare.
+  if (state.issMode && post.uSunScreen && post.uSunScreen.value.z > 0) {
+    const oc = _tmpV.copy(ship.pos).sub(bodies.earth.pos);
+    const sunRay = _bodyVec.copy(bodies.sun.pos).sub(ship.pos);
+    const sunDist = sunRay.length();
+    if (sunDist > 0) {
+      sunRay.divideScalar(sunDist);
+      const b = oc.dot(sunRay);
+      const c = oc.lengthSq() - bodies.earth.radius * bodies.earth.radius;
+      const disc = b * b - c;
+      if (disc >= 0) {
+        const sd = Math.sqrt(disc);
+        const t1 = -b - sd, t2 = -b + sd;
+        if (t2 > 0 && t1 < sunDist) {
+          post.uSunScreen.value.set(0, 0, 0);
+        }
+      }
+    }
+  }
   // === Exposure pipeline ===
   // Three layers: (1) AUTO/MANUAL gate, (2) sun-adaptive base target with
   // asymmetric iris dynamics, (3) camera-mode preset multiplier on the target.
