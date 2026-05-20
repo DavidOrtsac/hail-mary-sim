@@ -1079,7 +1079,6 @@ async function issLoadLiveClouds(){
 
     // === Stage 2: 3-tap horizontal median (catches any residual spikes) ===
     const med3 = (a, b, c) => Math.max(Math.min(a, b), Math.min(Math.max(a, b), c));
-    let cloudPixels = 0;
     for (let row = 0; row < GMGSI_H; row++) {
       const base = row * GMGSI_W;
       for (let col = 0; col < GMGSI_W; col++) {
@@ -1090,7 +1089,31 @@ async function issLoadLiveClouds(){
         const out = med3(l, c, r);
         const i = t * 4;
         px[i] = out; px[i+1] = out; px[i+2] = out; px[i+3] = 255;
-        if (out > 50) cloudPixels++;
+      }
+    }
+
+    // === Stage 3: 3-tap vertical Gaussian-like blur ========================
+    // GMGSI is a mosaic of 5 geostationary satellites; at high latitudes
+    // their coverage zones meet, and inter-satellite calibration produces a
+    // multi-row brightness step that reads as a faint horizontal-ish line
+    // across the rendered Earth. Median doesn't help (it PRESERVES edges).
+    // A center-weighted [1,2,1]/4 vertical blur softens the step over 3
+    // rows (~5 arc-minutes on the texture) without significantly blurring
+    // cloud features, which span many more rows than 3.
+    // Reuse tmp as the scratch buffer (read-source) by copying current px.
+    for (let i = 0, t = 0; i < px.length; i += 4, t++) tmp[t] = px[i];
+    let cloudPixels = 0;
+    for (let row = 0; row < GMGSI_H; row++) {
+      const base = row * GMGSI_W;
+      for (let col = 0; col < GMGSI_W; col++) {
+        const t = base + col;
+        const c = tmp[t];
+        const u = row > 0           ? tmp[t - GMGSI_W] : c;
+        const d = row < GMGSI_H - 1 ? tmp[t + GMGSI_W] : c;
+        const v = (u + 2 * c + d + 2) >> 2;     // [1,2,1]/4 with rounding
+        const i = t * 4;
+        px[i] = v; px[i+1] = v; px[i+2] = v;
+        if (v > 50) cloudPixels++;
       }
     }
     ctx.putImageData(imgData, 0, 0);
