@@ -1075,13 +1075,13 @@ async function issLoadLiveClouds(){
     }
 
     // === Stage 1: noise-floor subtraction + gamma boost ====================
-    // Gamma 0.40 (was 0.55) gives thicker mid-tone opacity so clouds read as
-    // realistically dense, not vapor-thin. Noise floor 18 (was 25) lets very
-    // faint clouds register at all instead of getting clipped to zero.
+    // Aggressive opacity curve: gamma 0.30 punches mid-tones up to ~85%
+    // opacity so clouds read assertively dense, not vapor-thin. Noise floor
+    // 10 captures very faint clouds that would otherwise clip to zero.
     const tmp = new Uint8Array(GMGSI_W * GMGSI_H);
     for (let i = 0, t = 0; i < px.length; i += 4, t++) {
-      const norm = Math.max(0, px[i] - 18) / 237;
-      const boosted = Math.pow(Math.min(1, norm), 0.40);
+      const norm = Math.max(0, px[i] - 10) / 245;
+      const boosted = Math.pow(Math.min(1, norm), 0.30);
       tmp[t] = Math.round(boosted * 255);
     }
 
@@ -1119,8 +1119,12 @@ async function issLoadLiveClouds(){
         const u = row > 0           ? tmp[t - GMGSI_W] : c;
         const d = row < GMGSI_H - 1 ? tmp[t + GMGSI_W] : c;
         const v = (u + 2 * c + d + 2) >> 2;     // [1,2,1]/4 with rounding
+        // Pure-white RGB with cloud signal as alpha. Without this, clouds
+        // render as gray (RGB = signal multiplied by white in shader = gray)
+        // and look washed-out / vapor-thin. White RGB + alpha-only gives
+        // assertive bright clouds at the gamma-boosted opacity.
         const i = t * 4;
-        px[i] = v; px[i+1] = v; px[i+2] = v;
+        px[i] = 255; px[i+1] = 255; px[i+2] = 255; px[i+3] = v;
         if (v > 50) cloudPixels++;
       }
     }
@@ -1139,9 +1143,10 @@ async function issLoadLiveClouds(){
     // cloud shading — acceptable for ISS mode where the cloud layer IS the
     // focal point and the underlying Earth shader still handles day/night.
     if (groups.earthClouds) {
+      // alpha comes from map.a (no alphaMap), so cloud RGB stays pure white
+      // and the texture's encoded alpha controls opacity directly.
       groups.earthClouds.material = new THREE.MeshBasicMaterial({
         map: tex,
-        alphaMap: tex,
         transparent: true,
         opacity: 1.0,
         depthWrite: false,
