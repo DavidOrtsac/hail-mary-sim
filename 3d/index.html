@@ -756,9 +756,11 @@ function issDetect(){
 // Free, public, no API key, no registration.
 const GMGSI_LAYER = 'global_visible_imagery_mosaic';
 // 16K composite stitched from a 4x4 grid of regional WMS requests.
-// nowCOAST's GeoServer per-request memory cap is ~64 MB, so each tile is
-// 4096x2048 (33 MB), and 16 of them tile to a 16384x8192 global mosaic.
-// Bandwidth ~8 MB, fetch ~30-60s parallel, GPU texture ~512 MB (no mipmaps).
+// (The earlier framebuffer crashes were NOT a texture-size issue. The real
+// bug was my code calling composer.setSize() every frame — that reallocates
+// renderbuffer attachments repeatedly and they drift out of sync with the
+// depth/MSAA buffers. The fix lives in issRenderFrame below: composer
+// is sized ONCE on window resize and never per-frame.)
 const TILE_W = 4096, TILE_H = 2048;
 const GRID_COLS = 4, GRID_ROWS = 4;
 const GMGSI_W = TILE_W * GRID_COLS;     // 16384
@@ -1100,9 +1102,9 @@ async function issLoadLiveClouds(){
       kernel[k + KR] = w; kSum += w;
     }
     for (let k = 0; k < KSIZE; k++) kernel[k] /= kSum;
-    // Vertical seams: at canvas x = TILE_W, 2*TILE_W, 3*TILE_W. Smooth in
-    // the horizontal direction over ±KR columns around each seam.
-    const verticalSeams = [TILE_W, 2 * TILE_W, 3 * TILE_W];
+    // Vertical seams: at canvas x = i*TILE_W for i in [1, GRID_COLS-1].
+    const verticalSeams = [];
+    for (let i = 1; i < GRID_COLS; i++) verticalSeams.push(i * TILE_W);
     for (const xs of verticalSeams) {
       const cBand = []; for (let dc = -KR; dc <= KR; dc++) cBand.push(xs + dc);
       for (let row = 0; row < GMGSI_H; row++) {
@@ -1120,10 +1122,11 @@ async function issLoadLiveClouds(){
         }
       }
     }
-    // Horizontal seams: at canvas y = TILE_H, 2*TILE_H, 3*TILE_H.
+    // Horizontal seams: at canvas y = i*TILE_H for i in [1, GRID_ROWS-1].
     // Refresh scratch after vertical-seam pass to read the smoothed cols.
     for (let i = 0, t = 0; i < px.length; i += 4, t++) aScratch[t] = px[i + 3];
-    const horizontalSeams = [TILE_H, 2 * TILE_H, 3 * TILE_H];
+    const horizontalSeams = [];
+    for (let i = 1; i < GRID_ROWS; i++) horizontalSeams.push(i * TILE_H);
     for (const ys of horizontalSeams) {
       const rBand = []; for (let dr = -KR; dr <= KR; dr++) rBand.push(ys + dr);
       for (const r of rBand) {
@@ -1199,12 +1202,16 @@ function issRenderFrame(){
   if (groups.earth.material.userData && groups.earth.material.userData.uCloudRotY) {
     groups.earth.material.userData.uCloudRotY.value = groups.earth.rotation.y;
   }
+  // The composer is sized ONCE on window resize (existing handler) and never
+  // per-frame. Calling composer.setSize each frame was reallocating WebGL
+  // renderbuffer attachments without keeping the MSAA depth attachment in
+  // sync, producing GL_INVALID_FRAMEBUFFER_OPERATION and killing the
+  // context. Split-screen now uses viewport + scissor at the canvas level —
+  // composer always renders at its fixed buffer size, and only the
+  // scissored region of the canvas receives the OutputPass blit.
   if (iss.freeCam) {
-    // Observer-mode camera already set by updateCamera. Render single full-
-    // frame view. (Split-screen is force-disabled when entering freeCam.)
     spaceCamera.aspect = innerWidth / innerHeight;
     spaceCamera.updateProjectionMatrix();
-    post.composer.setSize(innerWidth, innerHeight);
     renderer.setScissorTest(false);
     renderer.setViewport(0, 0, innerWidth, innerHeight);
     post.composer.render();
@@ -1214,14 +1221,12 @@ function issRenderFrame(){
     issAimCamera(iss.views[iss.viewIndex]);
     spaceCamera.aspect = innerWidth / innerHeight;
     spaceCamera.updateProjectionMatrix();
-    post.composer.setSize(innerWidth, innerHeight);
     renderer.setScissorTest(false);
     renderer.setViewport(0, 0, innerWidth, innerHeight);
     post.composer.render();
     return;
   }
   const w = innerWidth, h = innerHeight;
-  // WebGL viewport origin is bottom-left.
   const panels = iss.splitMode === 1
     ? [['LIMB',  0, h/2, w, h/2],
        ['NADIR', 0, 0,   w, h/2]]
@@ -1234,7 +1239,6 @@ function issRenderFrame(){
     issAimCamera(view);
     spaceCamera.aspect = pw / ph;
     spaceCamera.updateProjectionMatrix();
-    post.composer.setSize(pw, ph);
     renderer.setViewport(x, y, pw, ph);
     renderer.setScissor(x, y, pw, ph);
     renderer.setScissorTest(true);
