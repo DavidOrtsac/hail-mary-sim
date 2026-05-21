@@ -22,7 +22,7 @@
 <link rel="modulepreload" href="./vendor/three.module.js">
 <link rel="preload" as="image" href="./assets/earth_8k.jpg">
 <link rel="preload" as="image" href="./assets/earth_8k_clouds.jpg">
-<link rel="preload" as="image" href="./assets/earth_8k_night.jpg">
+<link rel="preload" as="image" href="./assets/earth_13k_night.jpg">
 <link rel="preload" as="image" href="./assets/earth_8k_spec.jpg">
 <!-- ISS mode only: SGP4 lib + live TLE preconnect. No-op unless ?iss=1. -->
 <link rel="modulepreload" href="./vendor/satellite.es.min.js">
@@ -768,6 +768,11 @@ const GMGSI_H = TILE_H * GRID_ROWS;     // 8192
 const GMGSI_REFRESH_MS = 30 * 60 * 1000;
 let _issCloudsLoading = false;
 let _issCloudsLoaded = false;
+// Downscaled bitmap of the GMGSI cloud composite, sized for the HUD mini-map
+// (~2× display resolution). Built once per refresh in issLoadLiveClouds and
+// drawn by issDrawMap. Resampling the 16K canvas at every HUD tick (4 Hz)
+// would be prohibitive; caching costs ~1 MB and a one-time drawImage.
+let _issCloudMapBitmap = null;
 
 if (issDetect()) {
   state.issMode = true;
@@ -1053,32 +1058,70 @@ async function issLoadLiveClouds(){
     // antimeridian wrap.
     for (let row = 0; row < GMGSI_H; row++) {
       const baseR = row * GMGSI_W * 4;
-      // Left edge: use col 2 as the valid neighbor.
-      const lv = px[baseR + 8];
-      px[baseR + 0] = lv; px[baseR + 1] = lv; px[baseR + 2] = lv;
-      px[baseR + 4] = lv; px[baseR + 5] = lv; px[baseR + 6] = lv;
-      // Right edge: use col W-3 as the valid neighbor.
+      // Antimeridian wrap bridge: with tex.wrapS = RepeatWrapping the texture
+      // samples col 0 and col W-1 as ADJACENT. If those endpoints differ in
+      // brightness (because cols 2 vs W-3 come from different geostationary
+      // satellite mosaics with different calibrations), a hard vertical line
+      // shows at lon=±180° on the sphere. Bridge: set col 0 and col W-1 to
+      // the AVERAGE of the two inner valid neighbors so the wrap point is
+      // identical on both sides. Cols 1 and W-2 still mirror their inner
+      // valid neighbors so the transition is smooth.
+      const lv = px[baseR + 8];                       // col 2
       const rOff = baseR + (GMGSI_W - 1) * 4;
-      const rv = px[rOff - 8];
-      px[rOff + 0] = rv; px[rOff + 1] = rv; px[rOff + 2] = rv;
+      const rv = px[rOff - 8];                        // col W-3
+      const bridge = (lv + rv) >> 1;
+      // col 0 (and the W-1 mirror across the wrap) — bridge value
+      px[baseR + 0] = bridge; px[baseR + 1] = bridge; px[baseR + 2] = bridge;
+      // col 1 — mirror col 2
+      px[baseR + 4] = lv; px[baseR + 5] = lv; px[baseR + 6] = lv;
+      // col W-2 — mirror col W-3
       px[rOff - 4] = rv; px[rOff - 3] = rv; px[rOff - 2] = rv;
+      // col W-1 — bridge value (matches col 0 after wrap)
+      px[rOff + 0] = bridge; px[rOff + 1] = bridge; px[rOff + 2] = bridge;
     }
 
-    // === Stage 1: Combined noise floor + gamma + white-RGB encoding ========
-    // ONE pass over 134M pixels for the whole pipeline. Noise floor 70 hard-
-    // suppresses sunlit ocean and dark land. Gamma 0.50 lifts cloud mid-
-    // tones into assertive opacity. RGB stays pure white at every pixel —
-    // when the new MeshLambertMaterial samples it, the scene's directional
-    // sun light modulates the visible brightness (dark on the night side,
-    // bright on the day side), so we don't need to dim the cloud RGB
-    // ourselves.
+    // === Stage 1 — Cloud extraction (soft alpha + luminance-preserving RGB) ===
+    // The previous pipeline (hard noise floor + gamma 0.5 + RGB forced pure
+    // white) destroyed the 16K nuance: binary edges produced "cookie-cutter
+    // ripped from a land map" silhouettes, and uniform white RGB × the
+    // 5.2-intensity directional sun saturated every cloud into a single
+    // "flashlight" sheet with no internal contrast. New model:
+    //   - Soft alpha: smoothstep(ALPHA_LOW, ALPHA_HIGH, lum). Hazy/thin
+    //     clouds fade smoothly to transparent instead of cliff-cutting.
+    //   - Luminance-preserving RGB: source luminance maps to a shaded gray
+    //     between RGB_FLOOR and 1.0, then pre-attenuated by RGB_SCALE so
+    //     post-Lambert with sun=5.2 reads as natural overcast brightness
+    //     instead of saturating. Cumulus shadow detail and cirrus
+    //     translucency survive into the final render.
+    //   - No standalone gamma. The smoothstep is the only mid-tone shaper.
+    const ALPHA_LOW   = 60;
+    const ALPHA_HIGH  = 195;
+    const ALPHA_RANGE = ALPHA_HIGH - ALPHA_LOW;
+    // 0.60 down from 0.78. Dense cloud peaks under sun=5.2 directional light
+    // were still saturating to pure white through tonemap. 0.60 caps the
+    // brightest cloud RGB at gray~153 so even subsolar cumulus reads as
+    // "lit bright cloud" not "blowtorch." Bump-map self-shading (below)
+    // restores the perceived brightness via 3D shading variation.
+    const RGB_SCALE   = 0.60;
+    const RGB_FLOOR   = 0.55;
+    const RGB_GAIN    = 1.0 - RGB_FLOOR;
+    const LUM_DEN     = 255 - ALPHA_LOW;
     let cloudPixels = 0;
     for (let i = 0; i < px.length; i += 4) {
-      const norm = Math.max(0, px[i] - 70) / 185;
-      const boosted = Math.pow(Math.min(1, norm), 0.50);
-      const v = Math.round(boosted * 255);
-      px[i] = 255; px[i+1] = 255; px[i+2] = 255; px[i+3] = v;
-      if (v > 50) cloudPixels++;
+      const lum = px[i];
+      let a;
+      if (lum <= ALPHA_LOW) a = 0;
+      else if (lum >= ALPHA_HIGH) a = 1;
+      else {
+        const x = (lum - ALPHA_LOW) / ALPHA_RANGE;
+        a = x * x * (3 - 2 * x);
+      }
+      const lumNorm = lum <= ALPHA_LOW ? 0 : (lum - ALPHA_LOW) / LUM_DEN;
+      const shade = (RGB_FLOOR + RGB_GAIN * lumNorm) * RGB_SCALE;
+      const c = Math.round(shade * 255);
+      px[i] = c; px[i+1] = c; px[i+2] = c;
+      px[i+3] = Math.round(a * 255);
+      if (a > 0.2) cloudPixels++;
     }
 
     // === Stage 2: Targeted seam smoothing at tile boundaries ==============
@@ -1144,8 +1187,68 @@ async function issLoadLiveClouds(){
         }
       }
     }
+    // === Stage 2b: RGB seam smoothing (mirror of Stage 2 for color channel) ===
+    // The luminance-preserving RGB introduced in Stage 1 means inter-tile
+    // brightness steps now show as color discontinuities, not just alpha
+    // steps. Re-run the same vertical + horizontal seam Gaussian on the R
+    // channel only (G and B are equal — RGB is gray), then mirror R→G,B.
+    // Same kernel object reused; same KR/sigma; ~10M extra ops.
+    for (let i = 0, t = 0; i < px.length; i += 4, t++) aScratch[t] = px[i];
+    for (const xs of verticalSeams) {
+      const cBand = []; for (let dc = -KR; dc <= KR; dc++) cBand.push(xs + dc);
+      for (let row = 0; row < GMGSI_H; row++) {
+        const baseR = row * GMGSI_W;
+        for (const c of cBand) {
+          if (c < 0 || c >= GMGSI_W) continue;
+          let sum = 0;
+          for (let k = -KR; k <= KR; k++) {
+            const cc = c + k;
+            if (cc < 0 || cc >= GMGSI_W) continue;
+            sum += aScratch[baseR + cc] * kernel[k + KR];
+          }
+          const v = Math.round(sum);
+          const off = (baseR + c) * 4;
+          px[off] = v; px[off + 1] = v; px[off + 2] = v;
+        }
+      }
+    }
+    for (let i = 0, t = 0; i < px.length; i += 4, t++) aScratch[t] = px[i];
+    for (const ys of horizontalSeams) {
+      const rBand = []; for (let dr = -KR; dr <= KR; dr++) rBand.push(ys + dr);
+      for (const r of rBand) {
+        if (r < 0 || r >= GMGSI_H) continue;
+        const baseR = r * GMGSI_W;
+        for (let col = 0; col < GMGSI_W; col++) {
+          let sum = 0;
+          for (let k = -KR; k <= KR; k++) {
+            const rr = r + k;
+            if (rr < 0 || rr >= GMGSI_H) continue;
+            sum += aScratch[rr * GMGSI_W + col] * kernel[k + KR];
+          }
+          const v = Math.round(sum);
+          const off = (baseR + col) * 4;
+          px[off] = v; px[off + 1] = v; px[off + 2] = v;
+        }
+      }
+    }
     ctx.putImageData(imgData, 0, 0);
     console.log('[ISS] 16K processed in', ((performance.now()-procStart)/1000).toFixed(1) + 's');
+    // Build the mini-map cloud cache. 1040×520 = 2× the 520×260 HUD canvas
+    // so it renders crisp at the displayed 300×170 mini-map size. High-quality
+    // smoothing on the one-time downscale gives clean cloud shapes (browser
+    // does a multi-tap filter internally). Stored as a Canvas — drawImage
+    // later uses the cached pixels, not the 16K source.
+    try {
+      const mb = document.createElement('canvas');
+      mb.width = 1040; mb.height = 520;
+      const mbCtx = mb.getContext('2d');
+      mbCtx.imageSmoothingEnabled = true;
+      mbCtx.imageSmoothingQuality = 'high';
+      mbCtx.drawImage(canvas, 0, 0, mb.width, mb.height);
+      _issCloudMapBitmap = mb;
+    } catch (e) {
+      _issCloudMapBitmap = null;
+    }
     const tex = new THREE.CanvasTexture(canvas);
     tex.wrapS = THREE.RepeatWrapping;
     tex.wrapT = THREE.ClampToEdgeWrapping;
@@ -1158,6 +1261,16 @@ async function issLoadLiveClouds(){
     tex.generateMipmaps = false;
     tex.minFilter = THREE.LinearFilter;
     tex.needsUpdate = true;
+    // Feed the live texture into the Earth shader's cloud-shadow uniform so
+    // ground shadows correspond to actual overhead clouds, not the static
+    // cube fallback. Cube-upgrade path still wires the cube version in
+    // observer mode (line ~3179); in ISS mode the cube cloud upgrade is
+    // gated off entirely, so this assignment is the authoritative source.
+    if (typeof earthMat !== 'undefined' && earthMat && earthMat.userData
+        && earthMat.userData.uCloudMap) {
+      earthMat.userData.uCloudMap.value = tex;
+      earthMat.needsUpdate = true;
+    }
     // FORCE-REPLACE the cloud material with MeshLambertMaterial. The previous
     // MeshBasicMaterial ignored the scene's directional sun light entirely,
     // so clouds rendered at full white-opacity on both day and night sides
@@ -1168,13 +1281,27 @@ async function issLoadLiveClouds(){
     // This is what real ISS feeds show — cloud tops glow on the lit half,
     // disappear into the night half.
     if (groups.earthClouds) {
-      groups.earthClouds.material = new THREE.MeshLambertMaterial({
+      // MeshPhongMaterial with shininess=0 + specular=black is functionally
+      // Lambert (diffuse only, no specular highlight) — but Phong supports
+      // bumpMap, which Lambert does not. The bumpMap reads the .r channel of
+      // the cloud texture as a heightfield; GPU-derivative-based bumping
+      // perturbs the surface normal proportional to the local luminance
+      // gradient. Result: cumulus tops shaded by the sun acquire real 3D
+      // light/shadow variation instead of reading as a uniform white sheet.
+      // bumpScale tuned at 0.06 — small enough to stay realistic, large
+      // enough to be visible against the directional sun.
+      groups.earthClouds.material = new THREE.MeshPhongMaterial({
         map: tex,
+        bumpMap: tex,
+        bumpScale: 0.06,
+        specular: new THREE.Color(0x000000),
+        shininess: 0,
         transparent: true,
         opacity: 1.0,
         depthWrite: false,
         blending: THREE.NormalBlending
       });
+      groups.earthClouds.userData.gmgsiInstalled = true;
     }
     if (groups.earthCirrus) groups.earthCirrus.visible = false;
     const pct = (100 * cloudPixels / (GMGSI_W * GMGSI_H)).toFixed(1);
@@ -1472,6 +1599,25 @@ async function issReverseGeocode(lat, lon){
     _issGeoLast = place;
     return place;
   } catch (e) {
+    // BigDataCloud returns HTTP 400 over open ocean (their geocoder is
+    // land-only). Cache the bbox-fallback name for this 0.5° cell so we
+    // don't keep re-hitting the API every cycle as the ISS crosses an
+    // ocean basin. Other errors (transient network/CORS) intentionally
+    // don't cache, so the next 4-second tick retries.
+    if (e && /\bhttp 400\b/.test(String(e.message))) {
+      const fb = issLookupPlaceFallback(lat, lon);
+      const place = {
+        iso: null,
+        name: String(fb.name || 'OPEN OCEAN').toUpperCase(),
+        isCountry: false,
+        city: null,
+        countryName: null,
+        principalSubdivision: null
+      };
+      _issGeoCache[key] = place;
+      _issGeoLast = place;
+      return place;
+    }
     return null;
   } finally {
     _issGeoInflight = false;
@@ -1480,9 +1626,15 @@ async function issReverseGeocode(lat, lon){
 function issLookupPlace(lat, lon){
   const key = _geoKey(lat, lon);
   if (_issGeoCache[key]) return _issGeoCache[key];
-  // Kick off async fetch — meanwhile use last-known result or bbox fallback.
+  // Kick off async fetch — meanwhile show the bbox fallback for THIS exact
+  // location. Never fall back to _issGeoLast: that produces the "stuck on
+  // Tokyo while over the Pacific" flicker where the HUD looks like it
+  // disappears and comes back as we cross coastlines. The bbox fallback is
+  // coarse but always correct for the current lat/lon, so the strip stays
+  // populated continuously — and the API result upgrades it to
+  // "City, Country" the moment that cell resolves.
   issReverseGeocode(lat, lon);
-  return _issGeoLast || issLookupPlaceFallback(lat, lon);
+  return issLookupPlaceFallback(lat, lon);
 }
 
 // World-map canvas: redraw terminator + ground track + ISS marker. Throttled
@@ -1558,52 +1710,66 @@ function issDrawMap(curLat, curLon, sunLat, sunLon){
     }
   }
   ctx.restore();
-  // 2. Ground track polyline (past = dim, future = bright).
+  // 1b. Live cloud overlay from the cached GMGSI mini-map bitmap. Drawn
+  //     after the terminator (so night-side clouds dim with the world
+  //     beneath) and before the ground track (so the ISS path stays
+  //     crisply on top). Alpha 0.67 — 50% less transparent than the
+  //     earlier 0.34 first pass so it reads as a real weather-map
+  //     overlay, while still letting continents show through.
+  if (_issCloudMapBitmap) {
+    ctx.save();
+    ctx.globalAlpha = 0.67;
+    ctx.drawImage(_issCloudMapBitmap, 0, 0, W, H);
+    ctx.restore();
+  }
+  // 2. Ground track polyline (past = dim, future = bright). Antimeridian
+  //    crossings are handled by extending the polyline to the ±180° edge
+  //    via linear lat interpolation, then beginning a new sub-path at the
+  //    opposite edge at the same interpolated latitude — so the track wraps
+  //    continuously across the canvas seam instead of leaving a visible
+  //    gap. Without this, every wrap looks like a disjoint orbit fragment.
   if (_issGroundTrack && _issGroundTrack.length) {
     const project = (la, lo) => [(lo + 180) / 360 * W, (90 - la) / 180 * H];
-    // Past (t < 0): dim line.
-    ctx.lineWidth = 1.2;
-    ctx.strokeStyle = 'rgba(255,210,90,.55)';
-    ctx.beginPath();
-    let drew = false;
-    for (let i = 0; i < _issGroundTrack.length; i++) {
-      const s = _issGroundTrack[i];
-      if (s.t > 0) break;
-      const [px, py] = project(s.lat, s.lon);
-      if (!drew) { ctx.moveTo(px, py); drew = true; }
-      else {
-        // Wraparound at antimeridian.
-        const prev = _issGroundTrack[i-1];
-        if (Math.abs(s.lon - prev.lon) > 180) {
-          ctx.stroke(); ctx.beginPath(); drew = false;
-          ctx.moveTo(px, py); drew = true;
+    const drawTrack = (filterFn, color, lineWidth) => {
+      ctx.lineWidth = lineWidth;
+      ctx.strokeStyle = color;
+      ctx.beginPath();
+      let prev = null;
+      for (let i = 0; i < _issGroundTrack.length; i++) {
+        const s = _issGroundTrack[i];
+        if (!filterFn(s)) continue;
+        const [px, py] = project(s.lat, s.lon);
+        if (prev === null) {
+          ctx.moveTo(px, py);
+        } else if (Math.abs(s.lon - prev.lon) > 180) {
+          // Antimeridian crossing: determine which edge prev exits through,
+          // interpolate latitude at exit, draw to that edge, then jump to
+          // the opposite edge at the same latitude and continue to s.
+          // East-going (prev.lon > 0, s.lon < 0): exits at +180, enters at -180.
+          // West-going (prev.lon < 0, s.lon > 0): exits at -180, enters at +180.
+          const eastGoing = prev.lon > 0 && s.lon < 0;
+          const exitLon  = eastGoing ?  180 : -180;
+          const enterLon = eastGoing ? -180 :  180;
+          // Wrapped lon delta (always positive, magnitude of the short way around).
+          const dWrap = eastGoing
+            ? (180 - prev.lon) + (180 + s.lon)
+            : (180 + prev.lon) + (180 - s.lon);
+          const fac = (eastGoing ? (180 - prev.lon) : (180 + prev.lon)) / dWrap;
+          const wrapLat = prev.lat + (s.lat - prev.lat) * fac;
+          const [exitPx,  exitPy ] = project(wrapLat, exitLon);
+          const [enterPx, enterPy] = project(wrapLat, enterLon);
+          ctx.lineTo(exitPx, exitPy);
+          ctx.moveTo(enterPx, enterPy);
+          ctx.lineTo(px, py);
         } else {
           ctx.lineTo(px, py);
         }
+        prev = s;
       }
-    }
-    if (drew) ctx.stroke();
-    // Future (t >= 0): bright line.
-    ctx.lineWidth = 1.6;
-    ctx.strokeStyle = 'rgba(255,210,90,.95)';
-    ctx.beginPath();
-    drew = false;
-    for (let i = 0; i < _issGroundTrack.length; i++) {
-      const s = _issGroundTrack[i];
-      if (s.t < 0) continue;
-      const [px, py] = project(s.lat, s.lon);
-      if (!drew) { ctx.moveTo(px, py); drew = true; }
-      else {
-        const prev = _issGroundTrack[i-1];
-        if (prev && Math.abs(s.lon - prev.lon) > 180) {
-          ctx.stroke(); ctx.beginPath(); drew = false;
-          ctx.moveTo(px, py); drew = true;
-        } else {
-          ctx.lineTo(px, py);
-        }
-      }
-    }
-    if (drew) ctx.stroke();
+      ctx.stroke();
+    };
+    drawTrack((s) => s.t <= 0, 'rgba(255,210,90,.55)', 1.2);
+    drawTrack((s) => s.t >= 0, 'rgba(255,210,90,.95)', 1.6);
   }
   // 3. Sub-satellite marker.
   const [mx, my] = [(curLon + 180) / 360 * W, (90 - curLat) / 180 * H];
@@ -2705,8 +2871,14 @@ function initSpace(){
     u.value = t;
     groups.earth.material.needsUpdate = true;
   };
+  // City-lights priority chain. Black Marble 2012 (NASA VIIRS Day/Night Band
+  // 13500×6750 — ~3 km/pixel, the gold standard publicly-distributed
+  // night-lights mosaic) is preferred. Falls through to the old 8K Solar
+  // System Scope variant and then web fallbacks if the local file is missing
+  // (e.g., during a deploy that pruned the asset).
   const nightSources = [
-    'assets/earth_8k_night.jpg',  // local 8K night lights (solarsystemscope)
+    'assets/earth_13k_night.jpg',  // NASA Black Marble 2012 (13500×6750)
+    'assets/earth_8k_night.jpg',   // local 8K fallback (solarsystemscope)
     'https://upload.wikimedia.org/wikipedia/commons/thumb/e/e1/Earth%27s_City_Lights_by_DMSP%2C_1994-1995_%28large%29.jpg/3840px-Earth%27s_City_Lights_by_DMSP%2C_1994-1995_%28large%29.jpg',
     'https://threejs.org/examples/textures/planets/earth_lights_2048.png'
   ];
@@ -3559,8 +3731,20 @@ function initSpace(){
         };
         return m;
       };
-      groups.earthClouds.material = mkMat(0.92, THREE.NormalBlending);
-      groups.earthCirrus.material = mkMat(0.45, THREE.NormalBlending);
+      // In ISS mode the live NOAA GMGSI 16K cloud texture owns the cloud sphere
+      // (installed by issLoadLiveClouds at a plain MeshLambertMaterial). The
+      // cube-map shader path below uses a static fallback texture with
+      // animated low-frequency fbm + silver-lining glow, which would look
+      // chunky/over-bright compared to the real 16K composite. Whichever of
+      // {GMGSI fetch, cube fetch} finishes last currently wins — that's the
+      // "sometimes clouds work, sometimes blobby" race. Gate the cloud swap
+      // on observer mode so GMGSI is always the authoritative cloud material
+      // in ISS mode. (Earth surface upgrade above still applies — only the
+      // cloud sphere is preserved.)
+      if (!state.issMode) {
+        groups.earthClouds.material = mkMat(0.92, THREE.NormalBlending);
+        groups.earthCirrus.material = mkMat(0.45, THREE.NormalBlending);
+      }
     }
   };  // end startCubeLoad
 
