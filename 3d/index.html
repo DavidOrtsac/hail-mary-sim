@@ -3197,7 +3197,12 @@ function initSpace(){
   spaceScene.add(groups.earth);
 
   // Cloud layer: slightly above surface, slow rotation, lit by sun via standard material.
-  const cloudFallback = createPlanetTexture(['#000','#fff'], 14);
+  // cloudFallback is INVISIBLE on purpose (zero blobs, all-black palette → alpha 0)
+  // so during the 1-3 second window before the real 8K cloud texture loads, the
+  // cloud sphere doesn't show as 14 chunky procedural white blobs across the Earth.
+  // wireClouds() replaces map+alphaMap with the loaded texture and the clouds
+  // fade in cleanly.
+  const cloudFallback = createPlanetTexture(['#000','#000'], 0);
   const cloudMat = new THREE.MeshStandardMaterial({
     map: cloudFallback,
     alphaMap: cloudFallback,
@@ -3248,11 +3253,12 @@ function initSpace(){
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <alphamap_fragment>',
       `{
-         float t   = uCloudTime * 0.012;
          vec3  nrm = normalize(vCloudWorldNormal);
-         // Animated curl-like FBM detail. Two counter-rotating fields blended.
-         float det = cfbm(vMapUv * vec2(600.0, 300.0) + vec2(t*1.7, -t*0.9));
          // Primary alpha (explicit sample — replaces stock alphamap_fragment).
+         // No cfbm procedural-noise multiplier — the 8K cloud texture's own
+         // detail is what drives alpha. Earlier version multiplied by
+         // (0.55 + 0.9 * cfbm(uv * 600x300)), which produced the chunky
+         // ~0.6deg-wide blob pattern that read as "AI-default" cloud noise.
          float a0  = texture2D(alphaMap, vMapUv).g;
          // Self-shadow: re-sample alphaMap shifted along sun-tangent direction.
          vec3 sunW = normalize(uSunWorld);
@@ -3261,8 +3267,8 @@ function initSpace(){
          vec3 northT = cross(nrm, eastT);
          vec2 sunUV  = vec2(dot(sunT, eastT), dot(sunT, northT));
          float shadowA = texture2D(alphaMap, vMapUv + sunUV * 0.0045).g;
-         // Sharpen + multiply with detail.
-         diffuseColor.a = smoothstep(0.05, 0.7, a0) * (0.55 + 0.9 * det);
+         // Soft alpha curve (smoothstep on the actual texture sample).
+         diffuseColor.a = smoothstep(0.05, 0.7, a0);
          // Edge softening via screen-space alpha gradient.
          float edge = fwidth(a0);
          diffuseColor.a *= 1.0 - smoothstep(0.0, 0.10, edge) * 0.30;
@@ -3315,6 +3321,23 @@ function initSpace(){
     // Share with Earth surface shader for cloud shadows.
     earthMat.userData.uCloudMap.value = t;
     earthMat.needsUpdate = true;
+    // In ISS mode, also seed the HUD mini-map's cloud overlay from this
+    // static 8K texture so the 2D map ALWAYS has clouds drawn on it —
+    // even when the live NOAA GMGSI fetch fails (which is what was
+    // happening on prod: no GMGSI = no mini-map clouds = looked like the
+    // strip was missing data). When GMGSI succeeds later,
+    // issLoadLiveClouds overwrites this bitmap with the live version.
+    if (state.issMode && !_issCloudMapBitmap && t.image) {
+      try {
+        const mb = document.createElement('canvas');
+        mb.width = 1040; mb.height = 520;
+        const mbCtx = mb.getContext('2d');
+        mbCtx.imageSmoothingEnabled = true;
+        mbCtx.imageSmoothingQuality = 'high';
+        mbCtx.drawImage(t.image, 0, 0, mb.width, mb.height);
+        _issCloudMapBitmap = mb;
+      } catch (e) { /* drawImage can throw on tainted canvas — leave null */ }
+    }
   };
   const cloudSources = [
     'assets/earth_8k_clouds.jpg',  // local 8K clouds (solarsystemscope)
@@ -3385,8 +3408,14 @@ function initSpace(){
         t.anisotropy = MAX_ANISO;
       }
       buildCubeEarth(cDay, cNight, cClouds, cSpec);
-      buildCubeClouds(cClouds);
-      console.log('[CUBE] loaded; materials upgraded');
+      // buildCubeClouds(cClouds) intentionally skipped. The cube-cloud shader
+      // uses cfbm2(uv * vec2(600.0, 300.0)) procedural noise which produces
+      // chunky ~0.6deg-wide blobs that read as "AI-default" texture. The
+      // equirect MeshStandardMaterial with the loaded 8K cloud JPEG (and the
+      // simplified onBeforeCompile from this commit) is now the only cloud
+      // path in observer mode. ISS mode uses MeshPhongMaterial+bumpMap with
+      // the live 16K GMGSI texture (independent path).
+      console.log('[CUBE] Earth surface upgraded (clouds stay equirect)');
     }).catch(err => {
       console.warn('[CUBE] unavailable, staying equirect:', err.message);
     });
