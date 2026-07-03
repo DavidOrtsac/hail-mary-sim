@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Exo+2:wght@300;400;500;600&display=swap" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/npm/dseg@0.46.0/css/dseg.css" rel="stylesheet">
-<title>Hail Mary — Flight Simulator</title>
+<title>Hail Mary — Compact Flight Simulator</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:#000;overflow:hidden;font-family:'Exo 2',sans-serif;color:#ccc}
@@ -46,8 +46,8 @@ canvas{display:block;position:absolute;top:0;left:0}
 <canvas id="c"></canvas>
 <div id="setup">
   <h1>HAIL MARY</h1>
-  <h2 style="font-family:'Orbitron',sans-serif;color:#c96;text-align:center;margin:0 0 2px;font-size:14px;letter-spacing:6px;font-weight:400;text-transform:uppercase">Flight Simulator</h2>
-  <p class="sub">Sol to Tau Ceti &middot; Real Physics</p>
+  <h2 style="font-family:'Orbitron',sans-serif;color:#c96;text-align:center;margin:0 0 2px;font-size:14px;letter-spacing:6px;font-weight:400;text-transform:uppercase">Compact Flight Simulator</h2>
+  <p class="sub">Hollywood Solar System &middot; Terminators Preserved &middot; Stellar Heat Disabled</p>
   <div class="sec">
     <h3>Mission Date</h3>
     <label>Departure <input type="date" id="in-date" value="2026-04-11"></label>
@@ -98,14 +98,14 @@ canvas{display:block;position:absolute;top:0;left:0}
     <p style="color:#9ab;font-size:12px;line-height:1.7;margin:0">
       The Sun is dying. An alien organism called <b style="color:#fa3">Astrophage</b> is consuming its energy, carried along the
       <b style="color:#f66">Petrova Line</b> between the Sun and Venus. Only one star in the neighborhood is unaffected:
-      <b style="color:#FFD080">Tau Ceti</b>. Your mission: travel 12 light-years, find out why, and bring the solution home.
+      <b style="color:#FFD080">Tau Ceti</b>, parked just beyond the compact outer planets for this test. Your mission: get there, find out why, and bring the solution home.
     </p>
   </div>
 
   <div style="margin-bottom:14px">
     <h3 style="font-family:Orbitron,sans-serif;color:#c96;font-size:10px;letter-spacing:2px;text-transform:uppercase;margin:0 0 6px">Objectives</h3>
     <div style="color:#9ab;font-size:11px;line-height:1.8">
-      <p style="margin:0"><b style="color:#4f4">1.</b> <b>Reach Tau Ceti</b> &mdash; Navigate from Earth orbit (or arrive at Tau Ceti, depending on profile). Use thrust, heading lock, and time warp to cross 12 light-years.</p>
+      <p style="margin:0"><b style="color:#4f4">1.</b> <b>Reach Tau Ceti</b> &mdash; Navigate from Earth orbit (or arrive at Tau Ceti, depending on profile). Use thrust and heading lock to cross the compressed interstellar gap.</p>
       <p style="margin:0"><b style="color:#4f4">2.</b> <b>Orbit Tau Ceti e (Adrian)</b> &mdash; Get into a stable orbit around the habitable-zone planet.</p>
       <p style="margin:0"><b style="color:#4f4">3.</b> <b>Deploy Chain &amp; Collect Taumoeba</b> &mdash; Press <b style="color:#4af">J</b> to deploy the 10km xenonite chain into Adrian's atmosphere. Collect <b style="color:#fa3">100 samples</b> of Taumoeba (the organism eating the Astrophage).</p>
       <p style="margin:0"><b style="color:#4f4">4.</b> <b>Centrifuge Enrichment</b> &mdash; Retract the chain (<b style="color:#4af">J</b>), then press <b style="color:#4af">P</b> to spin up the centrifuge. Breed 82.5 generations of nitrogen-resistant Taumoeba over 7 days.</p>
@@ -162,7 +162,29 @@ const C_LIGHT=299792458; // speed of light (m/s)
 const MU_SUN=1.32712440018e20, R_SUN=695700000;
 const g0=9.80665, OMEGA_E=7.2921e-5;
 const R_E=6371000, R_M=1737400, MU_E=3.986004e14, MU_M=4.9049e12;
-const MOON_A=384400000, MOON_SOI=66183000;
+
+// Compact arcade experiment: crush orbital distances while keeping body sizes,
+// masses, local launch/orbit physics, and the advanced lighting renderer intact.
+const COMPACT_SOLAR_SYSTEM=true;
+const SOLAR_DISTANCE_SCALE=0.05; // Earth orbits at 5% real distance; Neptune at ~1.5 AU.
+const LUNAR_DISTANCE_SCALE=0.08; // Moon center is ~30,752 km from Earth.
+const COMPACT_SOLAR_ORBIT_RATE_SCALE=Math.pow(SOLAR_DISTANCE_SCALE,-1.5);
+const COMPACT_LUNAR_ORBIT_RATE_SCALE=Math.pow(LUNAR_DISTANCE_SCALE,-1.5);
+const TAU_CETI_COMPACT_DISTANCE_AU=3.2;
+const TAU_CETI_PLANET_SCALE=0.18;
+const DISABLE_STELLAR_HEAT=true;
+function compactSOI(soi,radius,scale=SOLAR_DISTANCE_SCALE){
+  return COMPACT_SOLAR_SYSTEM?Math.max(radius*3,soi*scale):soi;
+}
+function compactTauA(au){
+  return au*AU*(COMPACT_SOLAR_SYSTEM?TAU_CETI_PLANET_SCALE:1);
+}
+function compactTauPeriod(days){
+  return days*86400*(COMPACT_SOLAR_SYSTEM?Math.pow(TAU_CETI_PLANET_SCALE,1.5):1);
+}
+const MOON_A_REAL=384400000;
+const MOON_A=MOON_A_REAL*(COMPACT_SOLAR_SYSTEM?LUNAR_DISTANCE_SCALE:1);
+const MOON_SOI=compactSOI(66183000,R_M,LUNAR_DISTANCE_SCALE);
 
 // Atmosphere (Earth only — US Std Atm 1976)
 const ATM=[{b:0,d:1.225,h:7249},{b:25e3,d:3.899e-2,h:6349},{b:5e4,d:1.027e-3,h:7714},
@@ -176,37 +198,37 @@ const TW_LEVELS=[1,2,5,10,50,100,1000,10000,100000,1000000,10000000,100000000,10
 // Orbital elements at J2000.0, rates per Julian century
 // ═══════════════════════════════════════════
 const PLANETS=[
-  {name:'Mercury',mu:2.2032e13,radius:2439700,soi:1.12e8,color:'#8C7853',color2:'#6B5D52',
+  {name:'Mercury',mu:2.2032e13,radius:2439700,soi:compactSOI(1.12e8,2439700),color:'#8C7853',color2:'#6B5D52',
    a0:.38710,e0:.20564,I0:7.005,Om0:48.331,w0:77.456,L0:252.251,
    da:0.00000037,de:.00002,dI:-.00595,dOm:-.12534,dw:.16048,dL:149472.674},
-  {name:'Venus',mu:3.2486e14,radius:6051800,soi:6.16e8,color:'#C8A55A',color2:'#FFED4E',
+  {name:'Venus',mu:3.2486e14,radius:6051800,soi:compactSOI(6.16e8,6051800),color:'#C8A55A',color2:'#FFED4E',
    a0:.72334,e0:.00677,I0:3.395,Om0:76.680,w0:131.602,L0:181.979,
    da:.0000039,de:-.00004,dI:-.00079,dOm:-.27769,dw:.00268,dL:58517.815},
-  {name:'Earth',mu:MU_E,radius:R_E,soi:9.25e8,color:'#4A90E2',color2:'#2E5C8A',
+  {name:'Earth',mu:MU_E,radius:R_E,soi:compactSOI(9.25e8,R_E),color:'#4A90E2',color2:'#2E5C8A',
    a0:1.00000,e0:.01671,I0:0,Om0:0,w0:102.938,L0:100.465,
    da:.00000562,de:-.00004,dI:-.01295,dOm:0,dw:.32327,dL:35999.372},
-  {name:'Mars',mu:4.2828e13,radius:3389500,soi:5.77e8,color:'#C1440E',color2:'#A23B2A',
+  {name:'Mars',mu:4.2828e13,radius:3389500,soi:compactSOI(5.77e8,3389500),color:'#C1440E',color2:'#A23B2A',
    a0:1.52371,e0:.09340,I0:1.850,Om0:49.560,w0:-23.944,L0:-4.553,
    da:.00002,de:.00008,dI:-.00813,dOm:-.29257,dw:.44441,dL:19140.303},
-  {name:'Jupiter',mu:1.26687e17,radius:69911000,soi:4.82e10,color:'#C88B3A',color2:'#8B6914',
+  {name:'Jupiter',mu:1.26687e17,radius:69911000,soi:compactSOI(4.82e10,69911000),color:'#C88B3A',color2:'#8B6914',
    a0:5.20289,e0:.04839,I0:1.304,Om0:100.474,w0:14.728,L0:34.396,
    da:-.00012,de:-.00013,dI:-.00184,dOm:.20469,dw:.21253,dL:3034.746},
-  {name:'Saturn',mu:3.7931e16,radius:58232000,soi:5.48e10,color:'#EAD6A6',color2:'#D4A574',
+  {name:'Saturn',mu:3.7931e16,radius:58232000,soi:compactSOI(5.48e10,58232000),color:'#EAD6A6',color2:'#D4A574',
    a0:9.53667,e0:.05386,I0:2.486,Om0:113.662,w0:92.599,L0:49.954,
    da:-.00125,de:-.00051,dI:.00194,dOm:-.28868,dw:-.41897,dL:1222.494},
-  {name:'Uranus',mu:5.7940e15,radius:25362000,soi:5.18e10,color:'#4FD0E7',color2:'#1FA8A8',
+  {name:'Uranus',mu:5.7940e15,radius:25362000,soi:compactSOI(5.18e10,25362000),color:'#4FD0E7',color2:'#1FA8A8',
    a0:19.18917,e0:.04726,I0:.773,Om0:74.017,w0:170.954,L0:313.238,
    da:-.00196,de:-.00004,dI:-.00243,dOm:.04241,dw:.40805,dL:428.482},
-  {name:'Neptune',mu:6.8365e15,radius:24622000,soi:8.66e10,color:'#4166F5',color2:'#2B50C5',
+  {name:'Neptune',mu:6.8365e15,radius:24622000,soi:compactSOI(8.66e10,24622000),color:'#4166F5',color2:'#2B50C5',
    a0:30.06993,e0:.00859,I0:1.770,Om0:131.784,w0:44.965,L0:-55.120,
    da:.00026,de:.00005,dI:.00035,dOm:-.00509,dw:-.32241,dL:218.460},
 ];
 
 // ═══════════════════════════════════════════
-// TAU CETI SYSTEM (11.912 ly — Project Hail Mary)
+// TAU CETI SYSTEM (normally 11.912 ly — compact build parks it nearby)
 // ═══════════════════════════════════════════
 const LY=9.4607e15; // 1 light-year in meters
-const TAU_CETI_DIST=11.912*LY; // 1.127e17 m
+const TAU_CETI_DIST=COMPACT_SOLAR_SYSTEM?TAU_CETI_COMPACT_DISTANCE_AU*AU:11.912*LY; // compact build parks Tau Ceti just beyond mini-Neptune
 // Place Tau Ceti at a fixed angle in the 2D plane (real RA ~26 deg from vernal equinox)
 const TAU_CETI_ANGLE=0.46; // ~26 degrees in radians
 // Tau Ceti proper motion: 37.2 km/s total space velocity relative to Sol
@@ -224,13 +246,14 @@ const TAU_CETI={
   color:'#FFD080',color2:'#FFA030',
   // Planets (real candidates from Feng et al. 2017)
   planets:[
-    {name:'Tau Ceti g',a:0.133*AU,period:20*86400,radius:8000000,color:'#887766'},
-    {name:'Tau Ceti h',a:0.243*AU,period:49*86400,radius:8500000,color:'#998877'},
-    {name:'Tau Ceti e',a:0.538*AU,period:162*86400,radius:12500000,color:'#55AA77',
+    {name:'Tau Ceti g',a:compactTauA(0.133),period:compactTauPeriod(20),radius:8000000,color:'#887766'},
+    {name:'Tau Ceti h',a:compactTauA(0.243),period:compactTauPeriod(49),radius:8500000,color:'#998877'},
+    {name:'Tau Ceti e',a:compactTauA(0.538),period:compactTauPeriod(162),radius:12500000,color:'#55AA77',
       taumoeba:true}, // ~2x Earth diameter, 3.93x Earth mass, 1.4g surface
-    {name:'Tau Ceti f',a:1.334*AU,period:636*86400,radius:10000000,color:'#6688AA'},
+    {name:'Tau Ceti f',a:compactTauA(1.334),period:compactTauPeriod(636),radius:10000000,color:'#6688AA'},
   ]
 };
+const TAU_CETI_SOI=COMPACT_SOLAR_SYSTEM?0.6*AU:5e13;
 
 const EARTH_IDX=2;
 const PRESETS=[
@@ -253,14 +276,14 @@ function solveKepler(M_deg,e){
 
 function planetPosAtJD(p,JD){
   // NASA DE441 via JPL Horizons (sub-km accuracy) — falls back to Keplerian if offline
-  if(horizonsCache.loaded){const h=horizonsLookup(p.name,JD);if(h)return h;}
+  if(!COMPACT_SOLAR_SYSTEM&&horizonsCache.loaded){const h=horizonsLookup(p.name,JD);if(h)return h;}
   const T=(JD-2451545.0)/36525;
-  const a=(p.a0+(p.da||0)*T)*AU;
+  const a=(p.a0+(p.da||0)*T)*AU*(COMPACT_SOLAR_SYSTEM?SOLAR_DISTANCE_SCALE:1);
   const e=p.e0+(p.de||0)*T;
   const I=(p.I0+(p.dI||0)*T)*Math.PI/180;
   const Om=(p.Om0+(p.dOm||0)*T)*Math.PI/180;
   const w=(p.w0+(p.dw||0)*T)*Math.PI/180;
-  const L=p.L0+(p.dL||0)*T;
+  const L=p.L0+(p.dL||0)*T*(COMPACT_SOLAR_SYSTEM?COMPACT_SOLAR_ORBIT_RATE_SCALE:1);
   const M=L-(p.w0+(p.dw||0)*T);
   const E=solveKepler(M,e);
   const xp=a*(Math.cos(E)-e), yp=a*Math.sqrt(1-e*e)*Math.sin(E);
@@ -354,39 +377,32 @@ function moonGeomAtJD(JD){
 }
 
 function moonXYFromGeom(g){
-  const rp=g.dist*Math.cos(g.lat);
+  const rp=g.dist*(COMPACT_SOLAR_SYSTEM?LUNAR_DISTANCE_SCALE:1)*Math.cos(g.lat);
   return{x:rp*Math.cos(g.lon),y:rp*Math.sin(g.lon)};
 }
 
-// Pooled result for moonPosRel — called once per updateBodyPositions, up to
-// 3× per substep. Allocation-free.
-const _moonRelOut={dx:0,dy:0,dvx:0,dvy:0,dist:0,lon:0,lat:0};
 function moonPosRel(JD){
   // NASA DE441 Moon — compute Earth-relative from Sun-centered absolute positions
-  if(horizonsCache.loaded){
+  if(!COMPACT_SOLAR_SYSTEM&&horizonsCache.loaded){
     const mAbs=horizonsLookup('Moon',JD),eAbs=horizonsLookup('Earth',JD);
-    if(mAbs&&eAbs){
-      // Note: mAbs and eAbs share the SAME pooled object pool (horizonsLookup
-      // pools per body name) so reading both before writing is fine — they're
-      // distinct entries in _horizonsOut keyed by name.
-      _moonRelOut.dx=mAbs.x-eAbs.x; _moonRelOut.dy=mAbs.y-eAbs.y;
-      _moonRelOut.dvx=mAbs.vx-eAbs.vx; _moonRelOut.dvy=mAbs.vy-eAbs.vy;
-      _moonRelOut.dist=Math.hypot(_moonRelOut.dx,_moonRelOut.dy);
-      _moonRelOut.lon=0; _moonRelOut.lat=0;
-      return _moonRelOut;
-    }
+    if(mAbs&&eAbs)return{
+      dx:mAbs.x-eAbs.x,dy:mAbs.y-eAbs.y,
+      dvx:mAbs.vx-eAbs.vx,dvy:mAbs.vy-eAbs.vy,
+      dist:Math.hypot(mAbs.x-eAbs.x,mAbs.y-eAbs.y),lon:0,lat:0};
   }
   // Fallback: ELP-2000 truncated series (offline mode)
-  const geom=moonGeomAtJD(JD);
+  const rate=COMPACT_SOLAR_SYSTEM?COMPACT_LUNAR_ORBIT_RATE_SCALE:1;
+  const moonJD=COMPACT_SOLAR_SYSTEM?2451545+(JD-2451545)*rate:JD;
+  const geom=moonGeomAtJD(moonJD);
   const pos=moonXYFromGeom(geom);
   const h=300/86400; // 5 minutes; enough to recover orbital speed cleanly.
-  const prev=moonXYFromGeom(moonGeomAtJD(JD-h));
-  const next=moonXYFromGeom(moonGeomAtJD(JD+h));
+  const prev=moonXYFromGeom(moonGeomAtJD(moonJD-h*rate));
+  const next=moonXYFromGeom(moonGeomAtJD(moonJD+h*rate));
   const dt=2*h*86400;
   return{
     dx:pos.x,dy:pos.y,
     dvx:(next.x-prev.x)/dt,dvy:(next.y-prev.y)/dt,
-    dist:geom.dist,lon:geom.lon,lat:geom.lat,
+    dist:geom.dist*(COMPACT_SOLAR_SYSTEM?LUNAR_DISTANCE_SCALE:1),lon:geom.lon,lat:geom.lat,
   };
 }
 
@@ -484,42 +500,24 @@ async function initHorizonsCache(jdStart){
   }
 }
 
-// Per-body cached last-segment index. Consecutive jd queries during a single
-// physics step almost always fall in the same hourly segment, so binary search
-// can be skipped on the hot path. Cuts the per-call cost from O(log n) to O(1).
-const _horizonsLastIdx=Object.create(null);
-// Reusable output object pooled per body so we don't allocate ~32 objects per
-// substep (8 planets × 4 RK4 evaluations).
-const _horizonsOut=Object.create(null);
 function horizonsLookup(name,JD){
   const d=horizonsCache.bodies[name];
   if(!d||d.length<10)return null;
   const stride=5,count=d.length/stride;
   if(JD<d[0]||JD>d[(count-1)*stride])return null;
-  // Fast path: same segment as last call?
-  let lo=_horizonsLastIdx[name]||0;
-  if(lo>=count-1)lo=count-2;
-  if(d[lo*stride]<=JD && JD<=d[(lo+1)*stride]){
-    // hit
-  } else {
-    // Binary search
-    let hi=count-1; lo=0;
-    while(lo+1<hi){const mid=(lo+hi)>>1;if(d[mid*stride]<=JD)lo=mid;else hi=mid;}
-    _horizonsLastIdx[name]=lo;
-  }
+  // Binary search
+  let lo=0,hi=count-1;
+  while(lo+1<hi){const mid=(lo+hi)>>1;if(d[mid*stride]<=JD)lo=mid;else hi=mid;}
   const i0=lo*stride,i1=(lo+1)*stride;
   const jd0=d[i0],jd1=d[i1];
-  let out=_horizonsOut[name];
-  if(!out){out=_horizonsOut[name]={x:0,y:0,vx:0,vy:0};}
-  if(Math.abs(JD-jd0)<1e-9){
-    out.x=d[i0+1];out.y=d[i0+2];out.vx=d[i0+3];out.vy=d[i0+4];return out;
-  }
+  if(Math.abs(JD-jd0)<1e-9)return{x:d[i0+1],y:d[i0+2],vx:d[i0+3],vy:d[i0+4]};
   const u=(JD-jd0)/(jd1-jd0),dt=(jd1-jd0)*86400;
-  out.x =hermite1D     (d[i0+1],d[i0+3],d[i1+1],d[i1+3],u,dt);
-  out.y =hermite1D     (d[i0+2],d[i0+4],d[i1+2],d[i1+4],u,dt);
-  out.vx=hermite1DDeriv(d[i0+1],d[i0+3],d[i1+1],d[i1+3],u,dt);
-  out.vy=hermite1DDeriv(d[i0+2],d[i0+4],d[i1+2],d[i1+4],u,dt);
-  return out;
+  return{
+    x:hermite1D(d[i0+1],d[i0+3],d[i1+1],d[i1+3],u,dt),
+    y:hermite1D(d[i0+2],d[i0+4],d[i1+2],d[i1+4],u,dt),
+    vx:hermite1DDeriv(d[i0+1],d[i0+3],d[i1+1],d[i1+3],u,dt),
+    vy:hermite1DDeriv(d[i0+2],d[i0+4],d[i1+2],d[i1+4],u,dt)
+  };
 }
 
 // ISS
@@ -1069,59 +1067,6 @@ function initTextures(){
   moonImg.onload=()=>{textures.MoonReal=moonImg;};
   earthImg.src='earth-2k.jpg';
   moonImg.src='moon-2k.jpg';
-
-  // NASA Black Marble city-lights texture (equirectangular 8K) — re-project once
-  // to north-pole orthographic to match earth-2k.jpg's projection. The projection
-  // runs on the main thread but only once at load (~200ms for 1024² output).
-  const nightImg=new Image();
-  nightImg.crossOrigin='anonymous';
-  nightImg.onload=()=>{
-    try{
-      const SZ=1024;
-      const oc=document.createElement('canvas');oc.width=nightImg.naturalWidth;oc.height=nightImg.naturalHeight;
-      oc.getContext('2d').drawImage(nightImg,0,0);
-      const src=oc.getContext('2d').getImageData(0,0,oc.width,oc.height);
-      const dst=document.createElement('canvas');dst.width=dst.height=SZ;
-      const dctx=dst.getContext('2d');
-      const id=dctx.createImageData(SZ,SZ);
-      const R=SZ/2;
-      const sw=src.width,sh=src.height;
-      // Orthographic: r = R*cos(lat). For the visible (north) hemisphere
-      // lat = acos(r/R). lon comes from the angular coordinate. We rotate the
-      // longitude by π so the prime meridian sits where the earth-2k texture
-      // does (verified empirically against the day map — Eurasia top, Americas
-      // bottom-left).
-      for(let y=0;y<SZ;y++){
-        for(let x=0;x<SZ;x++){
-          const dx=x-R, dy=y-R;
-          const r=Math.sqrt(dx*dx+dy*dy);
-          const di=(y*SZ+x)*4;
-          if(r>R-0.5){id.data[di+3]=0;continue;}
-          const cosLat=r/R;
-          const lat=Math.acos(cosLat); // 0..π/2 (equator to pole)
-          // lat=π/2 at center (pole), lat=0 at edge (equator)
-          // We had cosLat = r/R; r=0 → cosLat=0 → lat=π/2 ✓
-          const lon=Math.atan2(dy,dx)+Math.PI*0.5;
-          const u=((lon/(Math.PI*2))%1+1)%1;
-          const v=(Math.PI/2-lat)/Math.PI; // 0=pole(N), 0.5=equator
-          const sx=(u*sw)|0, sy=(v*sh)|0;
-          const si=(sy*sw+sx)*4;
-          id.data[di]=src.data[si];
-          id.data[di+1]=src.data[si+1];
-          id.data[di+2]=src.data[si+2];
-          // Premultiply alpha by luminance so dark ocean/land stays transparent
-          // and only the bright city pixels carry their additive contribution.
-          const lum=(src.data[si]*0.299+src.data[si+1]*0.587+src.data[si+2]*0.114)|0;
-          id.data[di+3]=Math.min(255,lum*1.6);
-        }
-      }
-      dctx.putImageData(id,0,0);
-      textures.EarthNightPolar=dst;
-      console.log('[NIGHT] city-lights polar texture ready');
-    }catch(err){console.warn('[NIGHT] projection failed',err);}
-  };
-  nightImg.onerror=()=>console.warn('[NIGHT] could not load night map');
-  nightImg.src='3d/assets/earth_8k_night.jpg';
 }
 
 // ═══════════════════════════════════════════
@@ -1134,10 +1079,6 @@ let rkt={x:0,y:0,vx:0,vy:0,angle:0,throttle:0,fuel:0};
 // Bodies: {name,x,y,vx,vy,mu,radius,soi,color,color2}
 let bodies=[]; // [Sun, Mercury..Neptune, Moon, Voyager 1, Tau Ceti...]
 let earth,moon,voyager1; // convenience references
-// Hot-path body lookups — cached once after init so we never run
-// `bodies.find(b=>b.name===…)` inside per-substep code paths. The closures
-// were allocating 4-8× per substep at high warp, adding GC pressure for free.
-let _tauCetiE=null, _tauCetiStar=null;
 let cam={x:0,y:0,zoom:1.7,target:'rocket'};
 let phase='setup',simTime=0,shipTime=0,twIdx=0;
 let pred=[],predAp=null,predPe=null,predAge=0;
@@ -1170,7 +1111,11 @@ function restoreRevertState(s){
   centrifugeMode=s.centrifugeMode;enrichmentProgress=s.enrichmentProgress;enrichmentGen=s.enrichmentGen;
   enrichmentComplete=s.enrichmentComplete;beetlesLaunched=s.beetlesLaunched;
   // Re-init bodies at the restored time
-  updateBodyPositions(jdStart+simTime/86400);
+  const jdNow=jdStart+simTime/86400;
+  for(let i=0;i<PLANETS.length;i++){
+    const p=planetPosAtJD(PLANETS[i],jdNow);
+    bodies[i+1].x=p.x;bodies[i+1].y=p.y;bodies[i+1].vx=p.vx;bodies[i+1].vy=p.vy;
+  }
   cam.x=rkt.x;cam.y=rkt.y;
 }
 function revert30s(){
@@ -1191,9 +1136,6 @@ function revert30s(){
 }
 let mapMode=false,savedZoom=1.7,camTIdx=0;
 let lastTime=0,onSurface=true,lastFrameDt=0.016;
-// Rolling physics-time measurement (ms). Drives the adaptive warp throttle so
-// the loop self-regulates instead of letting extreme warp tank the framerate.
-let _lastPhysMs=0;
 let iss={angle:0};
 let missionDate=new Date(2026,3,11);
 let jdStart=0;
@@ -1210,117 +1152,8 @@ function soundSpeed(alt){let T;if(alt<11e3)T=288.15-.0065*alt;else if(alt<2e4)T=
 function dragCd(m){if(m<.8)return .25;if(m<1.2)return .25+.625*(m-.8);if(m<3)return .5-.1389*(m-1.2);return .25;}
 
 // ═══════════════════════════════════════════
-// UI SYSTEM — token colors, responsive unit scaling, text legibility,
-// contextual HUD modes, critical-state escalation, zone docking.
-// Fonts are intentionally NOT touched (Orbitron / Exo 2 / DSEG7 stay).
-// ═══════════════════════════════════════════
-const UI={
-  // Six-token semantic color system. Replace ad-hoc grays with these.
-  C:{
-    LABEL :'#6a7280',  // dim chrome for field names
-    VALUE :'#d8e0e8',  // primary readout
-    MUTED :'#4a525a',  // disabled / inactive
-    GOOD  :'#5dd28b',  // green: nominal, lock acquired
-    WARN  :'#f5b342',  // amber: caution, escalating
-    CRIT  :'#ff5050',  // red: critical, danger
-    INFO  :'#62b5f5',  // cyan: orbital / chain / target info
-    PANEL :'rgba(8,12,24,0.90)',
-    PANEL2:'rgba(3,6,14,0.86)',
-    EDGE  :'rgba(255,170,50,0.10)',
-  },
-  dpr:1,                    // device pixel ratio (set in resize)
-  U:1,                      // unit scale, derived from min(W,H) for one source of truth
-  pulse:0,                  // 0..1 sinusoid, advanced each frame for critical blink
-  // Compute critical state escalation level from current sim state.
-  // 0 = nothing critical, 1 = single critical, 2 = multiple criticals stacked.
-  criticality(){
-    let n=0;
-    if(typeof heatLevel!=='undefined'&&heatLevel>=0.85)n++;
-    if(typeof rkt!=='undefined'&&rkt.fuel<=0&&!fuelTransitioned&&!artemis2Mode)n++;
-    if(braking)n++;
-    // Predicted impact: PE inside body radius and we're descending
-    if(typeof predPe==='number'&&predPe!==null&&predPe<0&&getVSpeed()<0)n++;
-    return n;
-  },
-  // Draw text with a soft dark plate so HUD stays readable over the sun / bright Earth.
-  // mode: 'light' (default — text over world, drop shadow), 'panel' (text inside panel chrome, no shadow).
-  txt(s,x,y,color,size,weight,family,mode){
-    weight=weight||'500';family=family||'Exo 2,sans-serif';size=size||12;
-    ctx.font=weight+' '+size+'px '+family;
-    if(mode!=='panel'){
-      ctx.fillStyle='rgba(0,0,0,0.55)';
-      ctx.fillText(s,x+1,y+1);
-    }
-    ctx.fillStyle=color||UI.C.VALUE;
-    ctx.fillText(s,x,y);
-  },
-  // 9-zone screen anchor helper. Returns {x,y} of a panel of size (w,h) anchored
-  // to the named zone with padding p. Zones: tl tc tr ml mc mr bl bc br.
-  // Falls back to centered if zone is unknown.
-  zone(z,w,h,p){
-    p=p||12;
-    let x=W/2-w/2,y=H/2-h/2;
-    if(z[0]==='t')y=p;else if(z[0]==='b')y=H-h-p;else if(z[0]==='m')y=H/2-h/2;
-    if(z[1]==='l')x=p;else if(z[1]==='r')x=W-w-p;else if(z[1]==='c')x=W/2-w/2;
-    return{x,y};
-  },
-  // Pulsing border for critical-state panels. cssColor like '255,80,80'.
-  pulseRect(x,y,w,h,cssColor,thickness){
-    const p=0.5+0.5*Math.sin(this.pulse*Math.PI*2);
-    const t=thickness||2;
-    ctx.save();
-    ctx.strokeStyle='rgba('+cssColor+','+(0.35+0.5*p)+')';
-    ctx.lineWidth=t;
-    ctx.strokeRect(x-1,y-1,w+2,h+2);
-    ctx.shadowColor='rgba('+cssColor+','+(0.4+0.4*p)+')';
-    ctx.shadowBlur=6+6*p;
-    ctx.strokeRect(x-1,y-1,w+2,h+2);
-    ctx.restore();
-  }
-};
-
-// Pick the HUD layout mode from current sim state. Each mode emphasizes only
-// the readouts that matter for that flight phase. Order matters — first match wins.
-function getHUDMode(){
-  if(centrifugeMode||(enrichmentComplete&&!beetlesLaunched))return'MISSION';
-  const spd=getSpeed?getSpeed():0;
-  const beta=spd/C_LIGHT;
-  if(beta>0.05)return'RELATIVISTIC';
-  const altE=earth?Math.hypot(rkt.x-earth.x,rkt.y-earth.y)-R_E:Infinity;
-  const altM=moon?Math.hypot(rkt.x-moon.x,rkt.y-moon.y)-R_M:Infinity;
-  const altA=_tauCetiE?Math.hypot(rkt.x-_tauCetiE.x,rkt.y-_tauCetiE.y)-_tauCetiE.radius:Infinity;
-  const altNear=Math.min(altE,altM,altA);
-  const vspd=getVSpeed?getVSpeed():0;
-  if(altNear<5e4&&vspd<0)return'LANDING';
-  if(altNear<1e5&&vspd>0)return'LAUNCH';
-  // Cruise: very far from any planet
-  const allBodyDist=Math.min(...bodies.filter(b=>b.radius>1e5).map(b=>Math.hypot(rkt.x-b.x,rkt.y-b.y)-b.radius));
-  if(allBodyDist>1e9)return'CRUISE';
-  return'ORBITAL';
-}
-
-// ═══════════════════════════════════════════
 // PHYSICS (N-body from ALL bodies)
-// Performance-critical hot path — designed to allocate zero objects per call.
-// At extreme time warp this can run 50k+ times per frame.
 // ═══════════════════════════════════════════
-// Preallocated work buffers. rocketAccel / bodyInertialAccel write here.
-const _accelOut=[0,0];
-const _bodyAccelOut=[0,0];
-// RK4 state vectors — reused every substep.
-const _rkS2=[0,0,0,0], _rkS3=[0,0,0,0], _rkS4=[0,0,0,0];
-const _rkK1=[0,0,0,0], _rkK2=[0,0,0,0], _rkK3=[0,0,0,0], _rkK4=[0,0,0,0];
-const _rkState=[0,0,0,0];  // active rocket state during a substep
-const _rkResult=[0,0,0,0]; // result back to absolute frame (SOI exit)
-const _rkDerivK=[0,0,0,0]; // pooled deriv return
-// Closure for the rocket derivative — reused every substep instead of being
-// re-allocated by the arrow function. Writes pooled buffer.
-function _rocketDeriv(state){
-  const a=rocketAccel(state[0],state[1],state[2],state[3],true,true);
-  _rkDerivK[0]=state[2]; _rkDerivK[1]=state[3];
-  _rkDerivK[2]=a[0];     _rkDerivK[3]=a[1];
-  return _rkDerivK;
-}
 function rocketAccel(x,y,vx,vy,wT,wD){
   let ax=0,ay=0;
   // Gravity from all bodies
@@ -1335,38 +1168,27 @@ function rocketAccel(x,y,vx,vy,wT,wD){
   if(wT&&rkt.throttle>0&&!centrifugeMode&&!(artemis2Mode&&rkt.fuel<=0)){
     const mass=getShipMass(),ta=(rkt.throttle*cfg.thrust*1000)/mass;
     ax+=ta*Math.cos(rkt.angle);ay+=ta*Math.sin(rkt.angle);}
-  // Atmospheric drag — Earth. Fast reject by squared-distance before sqrt.
-  // Earth atmosphere ends at 500 km, so atmospheric drag is irrelevant beyond
-  // (R_E + 5e5)² m². Skipping the sqrt+atmDensity branch when far away cuts
-  // ~30% off rocketAccel cost during interplanetary cruise.
+  // Atmospheric drag — Earth
+  // At hypersonic speeds, plasma sheath + shock compression dramatically increases
+  // effective drag area. Multiply drag for gameplay feel on a 900-ton ship.
   if(wD&&earth){
-    const dxE=x-earth.x, dyE=y-earth.y;
-    const r2E=dxE*dxE+dyE*dyE;
-    const ATM_R=R_E+5e5;
-    if(r2E<ATM_R*ATM_R){
-      const altE=Math.sqrt(r2E)-R_E;
-      if(altE>0){const rho=atmDensity(altE);if(rho>1e-16){
-        const ebx=earth.x,eby=earth.y;
-        const vax=earth.vx-OMEGA_E*(y-eby),vay=earth.vy+OMEGA_E*(x-ebx);
-        const vrx=vx-vax,vry=vy-vay,vrel=Math.hypot(vrx,vry);
-        if(vrel>.01){
-          const mach=vrel/soundSpeed(altE);
-          const cd=dragCd(mach);
-          const hyperMult=mach>25?30:mach>10?10+20*(mach-10)/15:mach>3?1+9*(mach-3)/7:1;
-          const da=.5*rho*vrel*cd*(cfg.area*hyperMult)/getShipMass();
-          ax-=da*vrx/vrel;ay-=da*vry/vrel;}}}
-    }
-  }
-  // Atmospheric drag — Adrian (Tau Ceti e). Same fast-reject.
+    const altE=Math.hypot(x-earth.x,y-earth.y)-R_E;
+    if(altE>0&&altE<5e5){const rho=atmDensity(altE);if(rho>1e-16){
+      const ebx=earth.x,eby=earth.y;
+      const vax=earth.vx-OMEGA_E*(y-eby),vay=earth.vy+OMEGA_E*(x-ebx);
+      const vrx=vx-vax,vry=vy-vay,vrel=Math.hypot(vrx,vry);
+      if(vrel>.01){
+        const mach=vrel/soundSpeed(altE);
+        const cd=dragCd(mach);
+        // Hypersonic multiplier: at Mach 10+, plasma bow shock increases effective area ~10-30x
+        const hyperMult=mach>25?30:mach>10?10+20*(mach-10)/15:mach>3?1+9*(mach-3)/7:1;
+        const da=.5*rho*vrel*cd*(cfg.area*hyperMult)/getShipMass();
+        ax-=da*vrx/vrel;ay-=da*vry/vrel;}}}}
+  // Atmospheric drag — Adrian (Tau Ceti e): thicker atmosphere, extends to 100km
   if(wD){
-    const tce=_tauCetiE;
-    if(tce){
-      const dxA=x-tce.x, dyA=y-tce.y;
-      const r2A=dxA*dxA+dyA*dyA;
-      const ATM_RA=tce.radius+2.5e5;
-      if(r2A<ATM_RA*ATM_RA){
-      const altA=Math.sqrt(r2A)-tce.radius;
-      if(altA>0&&altA<2.5e5){
+    const tce=bodies.find(b=>b.name==='Tau Ceti e');
+    if(tce){const altA=Math.hypot(x-tce.x,y-tce.y)-tce.radius;
+      if(altA>0&&altA<2.5e5){ // Adrian atmosphere extends ~250km
         // Adrian: 91% CO2, Venus-like density ~67 kg/m³ at surface, scale height ~15km
         const rhoA=67*Math.exp(-altA/15000);
         if(rhoA>1e-14){const vrx=vx-tce.vx,vry=vy-tce.vy,vrel=Math.hypot(vrx,vry);
@@ -1377,7 +1199,6 @@ function rocketAccel(x,y,vx,vy,wT,wD){
             const da=.5*rhoA*vrel*0.5*(cfg.area*hyperMult)/getShipMass();
             ax-=da*vrx/vrel;ay-=da*vry/vrel;}}
       }}
-    }
   }
   // Special relativistic correction: decompose acceleration into
   // parallel (÷γ³) and perpendicular (÷γ) components relative to velocity.
@@ -1393,216 +1214,93 @@ function rocketAccel(x,y,vx,vy,wT,wD){
     ax=aParX/g3+aPerpX/gamma;
     ay=aParY/g3+aPerpY/gamma;
   }
-  _accelOut[0]=ax;_accelOut[1]=ay;
-  return _accelOut;
+  return[ax,ay];
 }
 
-// Zero-alloc RK4. Caller's deriv(state) must write into a returned array (the
-// pooled _rkK* slots are reused by the caller's closure). State buffers _rkS2/3/4
-// are mutated in place. The result is written back into `s` (in-place update).
+// === Relativistic visual effects ===
+// Doppler factor D = γ(1 + β·d̂) for a source in direction (dx,dy) from observer
+// moving with velocity (vx,vy). D>1 blueshift (approaching), D<1 redshift (receding).
+function dopplerFactor(dx,dy,vx,vy){
+  const dLen=Math.hypot(dx,dy);
+  if(dLen<1e-9)return 1;
+  const dxh=dx/dLen,dyh=dy/dLen;
+  const vDotD=vx*dxh+vy*dyh; // m/s along line of sight, positive = approaching
+  const beta=vDotD/C_LIGHT;
+  const v2=vx*vx+vy*vy;
+  const beta2=Math.min(v2/(C_LIGHT*C_LIGHT),0.9999999);
+  const gamma=1/Math.sqrt(1-beta2);
+  return gamma*(1+beta);
+}
+// Map Doppler factor → RGB color multipliers (1,1,1 = neutral).
+// Symmetric in log(D): blueshift cools/blues, redshift warms/reds.
+function dopplerTintRGB(D){
+  const t=Math.max(-1.5,Math.min(1.5,Math.log(D)));
+  if(t>=0){
+    // Blueshift: pull R down, push B up
+    return[Math.max(0.25,1-t*0.55),Math.max(0.55,1-t*0.22),Math.min(1.9,1+t*0.55)];
+  } else {
+    // Redshift: push R up, pull B down
+    return[Math.min(1.9,1+(-t)*0.55),Math.max(0.55,1+t*0.22),Math.max(0.25,1+t*0.6)];
+  }
+}
+// Relativistic beaming: observed intensity ∝ D⁴ for thermal sources.
+// We use D³ as a perceptually gentler curve and clamp to [0.15, 3.5].
+function dopplerBeaming(D){
+  return Math.max(0.15,Math.min(3.5,D*D*D));
+}
+// Compose tint as a CSS rgba() string at given alpha, given an RGB multiplier triplet.
+function tintRGBA(rgb,alpha){
+  const r=Math.round(Math.max(0,Math.min(255,rgb[0]*128)));
+  const g=Math.round(Math.max(0,Math.min(255,rgb[1]*128)));
+  const b=Math.round(Math.max(0,Math.min(255,rgb[2]*128)));
+  return 'rgba('+r+','+g+','+b+','+alpha+')';
+}
+
 function rk4(s,deriv,dt){
-  const k1=deriv(s);
-  const k1a=k1[0],k1b=k1[1],k1c=k1[2],k1d=k1[3];
-  _rkS2[0]=s[0]+k1a*dt*0.5; _rkS2[1]=s[1]+k1b*dt*0.5;
-  _rkS2[2]=s[2]+k1c*dt*0.5; _rkS2[3]=s[3]+k1d*dt*0.5;
-  const k2=deriv(_rkS2);
-  const k2a=k2[0],k2b=k2[1],k2c=k2[2],k2d=k2[3];
-  _rkS3[0]=s[0]+k2a*dt*0.5; _rkS3[1]=s[1]+k2b*dt*0.5;
-  _rkS3[2]=s[2]+k2c*dt*0.5; _rkS3[3]=s[3]+k2d*dt*0.5;
-  const k3=deriv(_rkS3);
-  const k3a=k3[0],k3b=k3[1],k3c=k3[2],k3d=k3[3];
-  _rkS4[0]=s[0]+k3a*dt; _rkS4[1]=s[1]+k3b*dt;
-  _rkS4[2]=s[2]+k3c*dt; _rkS4[3]=s[3]+k3d*dt;
-  const k4=deriv(_rkS4);
-  const sixth=dt/6;
-  s[0]+=(k1a+2*k2a+2*k3a+k4[0])*sixth;
-  s[1]+=(k1b+2*k2b+2*k3b+k4[1])*sixth;
-  s[2]+=(k1c+2*k2c+2*k3c+k4[2])*sixth;
-  s[3]+=(k1d+2*k2d+2*k3d+k4[3])*sixth;
-  return s;
-}
-
-// Inertial acceleration on a body from all other bodies. Writes the pooled
-// _bodyAccelOut buffer (no allocation). Called once per SOI-frame substep.
-function bodyInertialAccel(b){
-  let ax=0,ay=0;
-  for(const o of bodies){
-    if(o===b||!o.mu)continue;
-    const dx=b.x-o.x,dy=b.y-o.y,r=Math.hypot(dx,dy);
-    if(r<10)continue;
-    const g=o.mu/(r*r*r);
-    ax-=g*dx;ay-=g*dy;
-  }
-  _bodyAccelOut[0]=ax;_bodyAccelOut[1]=ay;
-  return _bodyAccelOut;
-}
-
-// SOI-relative time-dependent RK4. State is [xrel,yrel,vxrel,vyrel] relative to
-// `body`. Eliminates float-precision loss when the rocket is in low orbit far
-// from the inertial origin: e.g., Tau Ceti e is at ~1e17 m, so inertial coords
-// have ~25 m ulp, wrecking low-orbit accuracy. In the body's frame the rocket's
-// state magnitude is O(planet radius), giving sub-millimeter precision.
-// Zero-alloc + skip-redundant-update version. Caller has already positioned
-// bodies at jd0. We sample at jd0+dt/2 and jd0+dt. Skip the mid-step update
-// when planets won't move enough during the substep to matter (the ephemeris
-// lookup itself is ~hundreds of nanoseconds we can save).
-const SKIP_MIDSTEP_PDT=0.05; // seconds — below this, planet motion < 1.5 km
-function rk4soi(stateRel,body,dt,jd0){
-  const dJDhalf=dt*(0.5/86400), dJD=dt/86400;
-  const skipMid=dt<SKIP_MIDSTEP_PDT;
-  // k1 — body already at jd0 (caller did updateBodyPositions)
-  let x=stateRel[0]+body.x, y=stateRel[1]+body.y;
-  let vx=stateRel[2]+body.vx, vy=stateRel[3]+body.vy;
-  let a=rocketAccel(x,y,vx,vy,true,true);
-  let ba=bodyInertialAccel(body);
-  const k1a=stateRel[2], k1b=stateRel[3], k1c=a[0]-ba[0], k1d=a[1]-ba[1];
-  // k2 — at jd0+dt/2
-  if(!skipMid)updateBodyPositions(jd0+dJDhalf);
-  _rkS2[0]=stateRel[0]+k1a*dt*0.5; _rkS2[1]=stateRel[1]+k1b*dt*0.5;
-  _rkS2[2]=stateRel[2]+k1c*dt*0.5; _rkS2[3]=stateRel[3]+k1d*dt*0.5;
-  x=_rkS2[0]+body.x; y=_rkS2[1]+body.y;
-  vx=_rkS2[2]+body.vx; vy=_rkS2[3]+body.vy;
-  a=rocketAccel(x,y,vx,vy,true,true);
-  ba=bodyInertialAccel(body);
-  const k2a=_rkS2[2], k2b=_rkS2[3], k2c=a[0]-ba[0], k2d=a[1]-ba[1];
-  // k3 — same midpoint
-  _rkS3[0]=stateRel[0]+k2a*dt*0.5; _rkS3[1]=stateRel[1]+k2b*dt*0.5;
-  _rkS3[2]=stateRel[2]+k2c*dt*0.5; _rkS3[3]=stateRel[3]+k2d*dt*0.5;
-  x=_rkS3[0]+body.x; y=_rkS3[1]+body.y;
-  vx=_rkS3[2]+body.vx; vy=_rkS3[3]+body.vy;
-  a=rocketAccel(x,y,vx,vy,true,true);
-  ba=bodyInertialAccel(body);
-  const k3a=_rkS3[2], k3b=_rkS3[3], k3c=a[0]-ba[0], k3d=a[1]-ba[1];
-  // k4 — at jd0+dt (always update so body ends in correct end-of-step position)
-  updateBodyPositions(jd0+dJD);
-  _rkS4[0]=stateRel[0]+k3a*dt; _rkS4[1]=stateRel[1]+k3b*dt;
-  _rkS4[2]=stateRel[2]+k3c*dt; _rkS4[3]=stateRel[3]+k3d*dt;
-  x=_rkS4[0]+body.x; y=_rkS4[1]+body.y;
-  vx=_rkS4[2]+body.vx; vy=_rkS4[3]+body.vy;
-  a=rocketAccel(x,y,vx,vy,true,true);
-  ba=bodyInertialAccel(body);
-  const k4a=_rkS4[2], k4b=_rkS4[3], k4c=a[0]-ba[0], k4d=a[1]-ba[1];
-  const sixth=dt/6;
-  stateRel[0]+=(k1a+2*k2a+2*k3a+k4a)*sixth;
-  stateRel[1]+=(k1b+2*k2b+2*k3b+k4b)*sixth;
-  stateRel[2]+=(k1c+2*k2c+2*k3c+k4c)*sixth;
-  stateRel[3]+=(k1d+2*k2d+2*k3d+k4d)*sixth;
-  return stateRel;
-}
-
-// Pick the body whose SOI the rocket is currently inside. Prefer planets and
-// moons over stars (KSP-style nested SOI). Returns null if not inside any
-// non-stellar SOI (caller should fall back to inertial-frame RK4).
-function dominantSOIBody(){
-  let dom=null,domR=Infinity;
-  for(const b of bodies){
-    if(!b||!b.mu||!b.soi)continue;
-    if(b.name==='Sun'||b.name==='Tau Ceti')continue;
-    const dx=rkt.x-b.x,dy=rkt.y-b.y,r=Math.hypot(dx,dy);
-    if(r<b.soi && r<domR){dom=b;domR=r;}
-  }
-  return dom;
-}
-
-// Time-dependent RK4. Calls updateBodyPositions at t, t+dt/2, t+dt so the
-// derivative function (which reads body positions via rocketAccel) sees the
-// planets at the correct time within each substep. Without this, planets are
-// frozen across the substep and gravity vectors drift, wrecking orbits at high
-// time warp (Earth moves ~30 km/s, so a 10s substep stales gravity by ~300 km).
-// Zero-alloc. Caller already positioned bodies at jd0; we only do mid/end
-// updates. Mid-step update is skipped when dt is small enough that planets
-// won't move significantly during the substep.
-function rk4t(s,deriv,dt,jd0){
-  const dJDhalf=dt*(0.5/86400), dJD=dt/86400;
-  const skipMid=dt<SKIP_MIDSTEP_PDT;
-  let k=deriv(s);
-  const k1a=k[0],k1b=k[1],k1c=k[2],k1d=k[3];
-  if(!skipMid)updateBodyPositions(jd0+dJDhalf);
-  _rkS2[0]=s[0]+k1a*dt*0.5; _rkS2[1]=s[1]+k1b*dt*0.5;
-  _rkS2[2]=s[2]+k1c*dt*0.5; _rkS2[3]=s[3]+k1d*dt*0.5;
-  k=deriv(_rkS2);
-  const k2a=k[0],k2b=k[1],k2c=k[2],k2d=k[3];
-  _rkS3[0]=s[0]+k2a*dt*0.5; _rkS3[1]=s[1]+k2b*dt*0.5;
-  _rkS3[2]=s[2]+k2c*dt*0.5; _rkS3[3]=s[3]+k2d*dt*0.5;
-  k=deriv(_rkS3);
-  const k3a=k[0],k3b=k[1],k3c=k[2],k3d=k[3];
-  updateBodyPositions(jd0+dJD);
-  _rkS4[0]=s[0]+k3a*dt; _rkS4[1]=s[1]+k3b*dt;
-  _rkS4[2]=s[2]+k3c*dt; _rkS4[3]=s[3]+k3d*dt;
-  k=deriv(_rkS4);
-  const sixth=dt/6;
-  s[0]+=(k1a+2*k2a+2*k3a+k[0])*sixth;
-  s[1]+=(k1b+2*k2b+2*k3b+k[1])*sixth;
-  s[2]+=(k1c+2*k2c+2*k3c+k[2])*sixth;
-  s[3]+=(k1d+2*k2d+2*k3d+k[3])*sixth;
-  return s;
-}
-
-// Position all on-rails bodies (planets, Moon, Voyager 1, Tau Ceti and its
-// planets) to the state they would be in at Julian date `jd`. Used both at
-// the start of stepPhysics and within rk4t substeps.
-function updateBodyPositions(jd){
-  for(let i=0;i<PLANETS.length;i++){
-    const p=planetPosAtJD(PLANETS[i],jd);
-    bodies[i+1].x=p.x;bodies[i+1].y=p.y;bodies[i+1].vx=p.vx;bodies[i+1].vy=p.vy;
-  }
-  const mr=moonPosRel(jd);
-  moon.x=earth.x+mr.dx;moon.y=earth.y+mr.dy;
-  moon.vx=earth.vx+mr.dvx;moon.vy=earth.vy+mr.dvy;
-  const tc=_tauCetiStar;
-  if(tc){
-    const elapsed=(jd-jdStart)*86400;
-    tc.x=TAU_CETI.x+TAU_CETI.vx*elapsed;
-    tc.y=TAU_CETI.y+TAU_CETI.vy*elapsed;
-    tc.vx=TAU_CETI.vx;tc.vy=TAU_CETI.vy;
-    // Tau Ceti planets are stored immediately after the star in `bodies`.
-    const startIdx=bodies.indexOf(tc)+1;
-    for(let i=0;i<TAU_CETI.planets.length;i++){
-      const tp=TAU_CETI.planets[i];
-      const b=bodies[startIdx+i];
-      if(!b||b.name!==tp.name)continue; // safety check
-      const ang=(jd-2451545)*2*Math.PI/(tp.period/86400);
-      b.x=tc.x+tp.a*Math.cos(ang);b.y=tc.y+tp.a*Math.sin(ang);
-      const v=Math.sqrt(TAU_CETI.mu/tp.a);
-      b.vx=tc.vx-v*Math.sin(ang);b.vy=tc.vy+v*Math.cos(ang);
-    }
-  }
-  if(voyager1){
-    const v1=voyager1StateAtJD(jd);
-    if(v1){voyager1.x=v1.x;voyager1.y=v1.y;voyager1.vx=v1.vx;voyager1.vy=v1.vy;}
-  }
+  const k1=deriv(s),s2=s.map((v,i)=>v+k1[i]*dt/2),k2=deriv(s2);
+  const s3=s.map((v,i)=>v+k2[i]*dt/2),k3=deriv(s3),s4=s.map((v,i)=>v+k3[i]*dt),k4=deriv(s4);
+  return s.map((v,i)=>v+(k1[i]+2*k2[i]+2*k3[i]+k4[i])*dt/6);
 }
 
 function stepPhysics(dt){
-  // Position all on-rails bodies at the start of the substep.
-  const jd0=jdStart+simTime/86400;
-  updateBodyPositions(jd0);
+  // Update planet positions (on rails)
+  const jdNow=jdStart+simTime/86400;
+  for(let i=0;i<PLANETS.length;i++){
+    const p=planetPosAtJD(PLANETS[i],jdNow);
+    bodies[i+1].x=p.x;bodies[i+1].y=p.y;bodies[i+1].vx=p.vx;bodies[i+1].vy=p.vy;
+  }
+  // Moon relative to Earth
+  const mr=moonPosRel(jdNow);
+  moon.x=earth.x+mr.dx;moon.y=earth.y+mr.dy;
+  moon.vx=earth.vx+mr.dvx;moon.vy=earth.vy+mr.dvy;
+  // Tau Ceti proper motion (37.2 km/s drift)
+  const tc=bodies.find(b=>b.name==='Tau Ceti');
+  if(tc){
+    const elapsed=simTime; // seconds since mission start
+    tc.x=TAU_CETI.x+TAU_CETI.vx*elapsed;
+    tc.y=TAU_CETI.y+TAU_CETI.vy*elapsed;
+    tc.vx=TAU_CETI.vx;tc.vy=TAU_CETI.vy;
+    // Tau Ceti planets orbit around Tau Ceti's live position
+    for(let i=0;i<TAU_CETI.planets.length;i++){
+      const tp=TAU_CETI.planets[i];
+      const ang=(jdNow-2451545)*2*Math.PI/(tp.period/86400);
+      const b=bodies.find(b=>b.name===tp.name);
+      if(b){b.x=tc.x+tp.a*Math.cos(ang);b.y=tc.y+tp.a*Math.sin(ang);
+        const v=Math.sqrt(TAU_CETI.mu/tp.a);
+        b.vx=tc.vx-v*Math.sin(ang);b.vy=tc.vy+v*Math.cos(ang);}
+    }
+  }
+  if(voyager1){
+    const v1=voyager1StateAtJD(jdNow);
+    if(v1){voyager1.x=v1.x;voyager1.y=v1.y;voyager1.vx=v1.vx;voyager1.vy=v1.vy;}
+  }
 
   applyHeadingLock();
   fcStep(dt);
   checkWarpSchedule();
-  // Rocket integration. If inside a planet/moon SOI, integrate in that body's
-  // frame for precision-preserving low orbits (especially around Tau Ceti e
-  // at 1e17 m from origin). Otherwise use the inertial-frame time-dependent
-  // RK4. Both variants advance planet positions within each substep so gravity
-  // vectors track Earth's 30 km/s motion correctly at high time warp.
-  // Persistent pooled state vectors — avoid per-substep array allocation.
-  // _rkState reused; _rkDerivOut is the deriv closure's pooled return.
-  let nr;
-  const dom=dominantSOIBody();
-  if(dom){
-    _rkState[0]=rkt.x-dom.x; _rkState[1]=rkt.y-dom.y;
-    _rkState[2]=rkt.vx-dom.vx; _rkState[3]=rkt.vy-dom.vy;
-    rk4soi(_rkState,dom,dt,jd0);
-    nr=_rkResult;
-    nr[0]=_rkState[0]+dom.x;  nr[1]=_rkState[1]+dom.y;
-    nr[2]=_rkState[2]+dom.vx; nr[3]=_rkState[3]+dom.vy;
-  }else{
-    _rkState[0]=rkt.x; _rkState[1]=rkt.y;
-    _rkState[2]=rkt.vx; _rkState[3]=rkt.vy;
-    rk4t(_rkState,_rocketDeriv,dt,jd0);
-    nr=_rkState;
-  }
+  // Rocket RK4
+  const rs=[rkt.x,rkt.y,rkt.vx,rkt.vy];
+  const nr=rk4(rs,s=>{const a=rocketAccel(s[0],s[1],s[2],s[3],true,true);return[s[2],s[3],a[0],a[1]];},dt);
   rkt.x=nr[0];rkt.y=nr[1];rkt.vx=nr[2];rkt.vy=nr[3];
   // Hard relativistic velocity cap — RK4 can overshoot at extreme time warp
   const vMag2=rkt.vx*rkt.vx+rkt.vy*rkt.vy;
@@ -1855,31 +1553,27 @@ function checkCollisions(pdt){
     }
   }
 
-  // === STELLAR RADIATIVE HEATING — inverse square law ===
-  // Astrophage on the hull absorb some radiation (they survive star surfaces),
-  // so the ship can get closer than a normal vessel. But the hull itself is conventional.
-  // Solar luminosity: 3.828e26 W. At distance r, flux = L/(4πr²).
-  // At 1 AU: 1361 W/m². Ship starts heating when flux exceeds what radiators can handle.
-
-  // Sun
   const dSun=Math.hypot(rkt.x,rkt.y);
   const sunSafeR=0.15*AU; // ~22.5M km — inside Mercury orbit. Astrophage shielding helps.
-  if(dSun<sunSafeR&&dSun>R_SUN){
-    // Heat rate scales with inverse square, normalized so edge of safe zone = 0
-    // At half safe distance: 4x flux. At 10 solar radii: extreme.
-    const fluxRatio=(sunSafeR/dSun)*(sunSafeR/dSun); // 1 at edge, huge near star
-    const solarHeatRate=(fluxRatio-1)*0.04; // 0 at safe edge, ramps up fast
-    if(solarHeatRate>0){heatLevel+=solarHeatRate*dt;beingHeated=true;}
-    // Instant kill inside ~3 solar radii — no material survives the corona
-    if(dSun<R_SUN*3){endGame('crash','Sun (incinerated in corona)',getSpeed());return;}
-  }
-
-  // Tau Ceti — 0.52x solar luminosity, cooler G8.5V star
   const tcStar=bodies.find(b=>b.name==='Tau Ceti');
-  if(tcStar){
-    const dTC=Math.hypot(rkt.x-tcStar.x,rkt.y-tcStar.y);
-    const tcSafeR=0.11*AU; // smaller safe zone — dimmer star
-    if(dTC<tcSafeR&&dTC>tcStar.radius){
+  let dTC=Infinity;
+  const tcSafeR=0.11*AU; // smaller safe zone — dimmer star
+  if(tcStar)dTC=Math.hypot(rkt.x-tcStar.x,rkt.y-tcStar.y);
+
+  // === STELLAR RADIATIVE HEATING — disabled in compact build ===
+  // With the whole system crushed down, real inverse-square heating would cook
+  // the ship constantly. Direct star collisions still end the mission below.
+  if(!DISABLE_STELLAR_HEAT){
+    // Sun
+    if(dSun<sunSafeR&&dSun>R_SUN){
+      const fluxRatio=(sunSafeR/dSun)*(sunSafeR/dSun); // 1 at edge, huge near star
+      const solarHeatRate=(fluxRatio-1)*0.04; // 0 at safe edge, ramps up fast
+      if(solarHeatRate>0){heatLevel+=solarHeatRate*dt;beingHeated=true;}
+      if(dSun<R_SUN*3){endGame('crash','Sun (incinerated in corona)',getSpeed());return;}
+    }
+
+    // Tau Ceti — 0.52x solar luminosity, cooler G8.5V star
+    if(tcStar&&dTC<tcSafeR&&dTC>tcStar.radius){
       const fluxRatio=(tcSafeR/dTC)*(tcSafeR/dTC);
       const tcHeatRate=(fluxRatio-1)*0.03; // slightly less intense than Sol
       if(tcHeatRate>0){heatLevel+=tcHeatRate*dt;beingHeated=true;}
@@ -1902,8 +1596,8 @@ function checkCollisions(pdt){
   }
   // Ship destroyed by accumulated heat
   if(heatLevel>=0.98){
-    const nearSun=dSun<sunSafeR;
-    const nearTC=tcStar&&Math.hypot(rkt.x-tcStar.x,rkt.y-tcStar.y)<0.11*AU;
+    const nearSun=!DISABLE_STELLAR_HEAT&&dSun<sunSafeR;
+    const nearTC=!DISABLE_STELLAR_HEAT&&tcStar&&dTC<tcSafeR;
     const nearBody=nearSun?'Sun':nearTC?'Tau Ceti':
       earth&&Math.hypot(rkt.x-earth.x,rkt.y-earth.y)<R_E+1e5?'Earth':
       tce&&Math.hypot(rkt.x-tce.x,rkt.y-tce.y)<tce.radius+2.5e5?'Adrian':'space';
@@ -1980,7 +1674,7 @@ function getDom(){
   for(const tp of TAU_CETI.planets){
     const b=bodies.find(b=>b.name===tp.name);
     if(b&&Math.hypot(rkt.x-b.x,rkt.y-b.y)<b.soi)return{name:b.name,b};}
-  // Check Tau Ceti star SOI (large — 5e13 m)
+  // Check Tau Ceti star SOI
   const tc=bodies.find(b=>b.name==='Tau Ceti');
   if(tc&&Math.hypot(rkt.x-tc.x,rkt.y-tc.y)<tc.soi)return{name:'Tau Ceti',b:tc};
   return{name:'Sun',b:bodies[0]};
@@ -2068,7 +1762,7 @@ function updatePrediction(){
       if(pb&&PLANETS[i].soi)soiBodies.push({b:pb,soi:PLANETS[i].soi,name:pb.name});
     }
   }
-  if(d.name==='Sun'&&earth)soiBodies.push({b:earth,soi:9.25e8,name:'Earth'});
+  if(d.name==='Sun'&&earth)soiBodies.push({b:earth,soi:PLANETS[EARTH_IDX].soi,name:'Earth'});
 
   // Sample conic for SOI crossings
   let nuStart,nuEnd;
@@ -2880,30 +2574,16 @@ function drawLogPanel(){
 // CAMERA
 // ═══════════════════════════════════════════
 function updateCamera(dt){
-  // Free-pan mode: user is driving cam.x / cam.y directly via mouse drag — don't
-  // overwrite them with target tracking. (Switched back to a body via the menu
-  // or by double-clicking to recenter on the rocket.)
-  if(cam.target==='free')return;
   let tx,ty;
   if(cam.target==='rocket'){tx=rkt.x;ty=rkt.y;}
   else if(cam.target==='system'){tx=0;ty=0;}
   else{const b=bodies.find(b=>b.name===cam.target);if(b){tx=b.x;ty=b.y;}else{tx=rkt.x;ty=rkt.y;}}
-  // Snap when tracking rocket directly or when way off-screen; otherwise lerp.
-  // Previously we also hard-snapped whenever warp >= 10, which exposed every
-  // per-substep integration wobble as visible jitter. With time-dependent RK4
-  // the rocket trajectory is smooth, so we can keep a critically-damped follow
-  // even during warp. Use a faster lerp constant at high warp so the camera
-  // still keeps up with fast translation but smooths sub-pixel noise.
+  // Snap instantly when tracking rocket or warping (prevents shake & off-center zoom)
   const dist=Math.hypot(cam.x-tx,cam.y-ty);
   const mpp=Math.pow(10,cam.zoom);
   const screenDist=dist/mpp;
-  if(cam.target==='rocket'||screenDist>2000){cam.x=tx;cam.y=ty;}
-  else{
-    const tw=TW_LEVELS[twIdx];
-    const kRate=tw>=1000?60:tw>=100?40:tw>=10?28:18;
-    const k=1-Math.exp(-kRate*dt);
-    cam.x+=(tx-cam.x)*k;cam.y+=(ty-cam.y)*k;
-  }
+  if(cam.target==='rocket'||TW_LEVELS[twIdx]>=10||screenDist>2000){cam.x=tx;cam.y=ty;}
+  else{const k=1-Math.exp(-18*dt);cam.x+=(tx-cam.x)*k;cam.y+=(ty-cam.y)*k;}
 }
 const CAM_LIST=['rocket','Earth','Moon','Sun','Mars','Jupiter','Saturn','Tau Ceti','Tau Ceti e'];
 function cycleCam(){camTIdx=(camTIdx+1)%CAM_LIST.length;cam.target=CAM_LIST[camTIdx];mapMode=false;}
@@ -3019,52 +2699,19 @@ canvas.addEventListener('wheel',e=>{
 },{passive:false});
 // Camera tilt — right-drag to view the 2D map from an angle (canvas transform, not CSS)
 let tiltX=0,tiltY=0,tiltDragging=false,tiltStartX=0,tiltStartY=0,tiltBaseX=0,tiltBaseY=0;
-// Left-click pan: drag to translate the camera; click without drag still falls
-// through to the existing click handler (UI buttons keep working). When the
-// user drags, we switch cam.target to 'free' so the camera stops auto-tracking
-// the rocket/body.
-let panDragging=false,panStartX=0,panStartY=0,panBaseCamX=0,panBaseCamY=0,panMoved=false;
-const PAN_THRESHOLD=4; // pixels before we consider it a drag (not a click)
 canvas.addEventListener('contextmenu',e=>e.preventDefault());
 canvas.addEventListener('mousedown',e=>{
   if(e.button===2){tiltDragging=true;tiltStartX=e.clientX;tiltStartY=e.clientY;tiltBaseX=tiltX;tiltBaseY=tiltY;e.preventDefault();}
-  else if(e.button===0){
-    panStartX=e.clientX;panStartY=e.clientY;
-    panBaseCamX=cam.x;panBaseCamY=cam.y;
-    panDragging=true;panMoved=false;
-  }
 });
 window.addEventListener('mousemove',e=>{
-  if(tiltDragging){
-    tiltX=tiltBaseX+(e.clientY-tiltStartY)*0.2;
-    tiltY=tiltBaseY-(e.clientX-tiltStartX)*0.2;
-    tiltX=Math.max(-55,Math.min(55,tiltX));
-    tiltY=Math.max(-45,Math.min(45,tiltY));
-  }
-  if(panDragging){
-    const ddx=e.clientX-panStartX, ddy=e.clientY-panStartY;
-    if(!panMoved&&Math.hypot(ddx,ddy)>PAN_THRESHOLD){
-      panMoved=true;
-      // Promote to free-pan mode — stop tracking the rocket/target.
-      cam.target='free';
-    }
-    if(panMoved){
-      const mpp=Math.pow(10,cam.zoom);
-      // Drag right → world should move right → cam.x decreases. Y inverted.
-      cam.x=panBaseCamX-ddx*mpp;
-      cam.y=panBaseCamY+ddy*mpp; // screen Y down, world Y up
-    }
-  }
+  if(!tiltDragging)return;
+  tiltX=tiltBaseX+(e.clientY-tiltStartY)*0.2;
+  tiltY=tiltBaseY-(e.clientX-tiltStartX)*0.2;
+  tiltX=Math.max(-55,Math.min(55,tiltX));
+  tiltY=Math.max(-45,Math.min(45,tiltY));
 });
-window.addEventListener('mouseup',e=>{
-  if(e.button===2)tiltDragging=false;
-  if(e.button===0){panDragging=false;}
-});
-// Double-click recenters camera on rocket AND clears tilt (single gesture to "go home")
-canvas.addEventListener('dblclick',e=>{
-  if(tiltX!==0||tiltY!==0){tiltX=0;tiltY=0;}
-  cam.target='rocket';
-});
+window.addEventListener('mouseup',e=>{if(e.button===2)tiltDragging=false;});
+canvas.addEventListener('dblclick',e=>{if(tiltX!==0||tiltY!==0){tiltX=0;tiltY=0;}});
 function applyTilt(){
   if(tiltX===0&&tiltY===0)return;
   const rx=tiltX*Math.PI/180,ry=tiltY*Math.PI/180;
@@ -3079,9 +2726,6 @@ function removeTilt(){
 }
 // Click handler for warp panel buttons
 canvas.addEventListener('click',e=>{
-  // If the user just finished a pan drag, suppress the click so they don't
-  // accidentally hit a UI button on mouse-up.
-  if(panMoved){panMoved=false;return;}
   const mx=e.clientX,my=e.clientY;
   // Pause menu clicks
   if(paused){
@@ -3179,165 +2823,11 @@ canvas.addEventListener('click',e=>{
       cam.target=b.target;camTIdx=CAM_LIST.indexOf(b.target);mapMode=false;showCamPanel=false;return;}}
     showCamPanel=false;return;
   }
-  if(showWarpPanel||showGoToPanel){
-    for(const b of warpButtons){if(mx>=b.x&&mx<=b.x+b.w&&my>=b.y&&my<=b.y+b.h){startWarpFor(b.s);return;}}
-    for(const b of goToButtons){if(mx>=b.x&&mx<=b.x+b.w&&my>=b.y&&my<=b.y+b.h){startGoTo(b.target);showGoToPanel=false;return;}}
-    showWarpPanel=false;showGoToPanel=false;
-    return;
-  }
-  // PATH-SKIP: click on the predicted trajectory to coast-skip to that point
-  // in time. Only when throttle is 0 (no thrust during the coast) and not
-  // braking / mid-burn-plan. Like Grace's sleep in Project Hail Mary —
-  // analytical Keplerian propagation, no per-substep integration, so it's
-  // instantaneous regardless of how many sim-years you're skipping.
-  if(phase==='flying'&&!paused&&_warpHover&&_warpHover.valid&&rkt.throttle<=0&&!braking&&!burnPlan.active&&!goTo.active){
-    executeWarpTo(_warpHover);
-    return;
-  }
+  if(!showWarpPanel&&!showGoToPanel)return;
+  for(const b of warpButtons){if(mx>=b.x&&mx<=b.x+b.w&&my>=b.y&&my<=b.y+b.h){startWarpFor(b.s);return;}}
+  for(const b of goToButtons){if(mx>=b.x&&mx<=b.x+b.w&&my>=b.y&&my<=b.y+b.h){startGoTo(b.target);showGoToPanel=false;return;}}
+  showWarpPanel=false;showGoToPanel=false;
 });
-
-// ═══════════════════════════════════════════
-// PATH-SKIP: click predicted orbit to coast to that point.
-// ═══════════════════════════════════════════
-let _warpHover=null; // {patch, nu, ssx, ssy, wx, wy, dt, valid}
-
-// Forward time of flight from one true anomaly to another along the same conic.
-// Solves Kepler analytically: convert true → eccentric → mean anomaly, then
-// scale by orbital period (elliptical) or hyperbolic mean motion. Returns
-// seconds, or Infinity if the requested direction is not reachable.
-function timeOfFlight(el,nu0,nu1,mu){
-  if(el.e<1){
-    const e=el.e, a=el.a;
-    if(!isFinite(a)||a<=0)return Infinity;
-    const E0=2*Math.atan2(Math.sqrt(1-e)*Math.sin(nu0/2), Math.sqrt(1+e)*Math.cos(nu0/2));
-    let E1=2*Math.atan2(Math.sqrt(1-e)*Math.sin(nu1/2), Math.sqrt(1+e)*Math.cos(nu1/2));
-    const M0=E0-e*Math.sin(E0);
-    let M1=E1-e*Math.sin(E1);
-    // Force forward direction (wrap by full revolution if needed)
-    while(M1<M0)M1+=2*Math.PI;
-    const T=2*Math.PI*Math.sqrt(a*a*a/mu);
-    return (M1-M0)/(2*Math.PI)*T;
-  } else {
-    const e=el.e, a=el.a; // a is negative for hyperbolic
-    if(!isFinite(a)||a>=0)return Infinity;
-    const cf=Math.sqrt((e-1)/(e+1));
-    // tan(nu/2) may diverge at the asymptotes; clamp.
-    const t0=Math.tan(Math.max(-1.5,Math.min(1.5,nu0))/2);
-    const t1=Math.tan(Math.max(-1.5,Math.min(1.5,nu1))/2);
-    const F0=2*Math.atanh(Math.max(-0.9999,Math.min(0.9999,cf*t0)));
-    const F1=2*Math.atanh(Math.max(-0.9999,Math.min(0.9999,cf*t1)));
-    const M0=e*Math.sinh(F0)-F0;
-    const M1=e*Math.sinh(F1)-F1;
-    if(M1<=M0)return Infinity;
-    return (M1-M0)*Math.sqrt(-a*a*a/mu);
-  }
-}
-
-// Find the closest point on the primary predicted orbit to a screen position.
-// Returns hover info or null if no match within tolerance. We only consider
-// patch[0] (the current body's conic) — SOI transitions in patch[1]+ would
-// require multi-body propagation that the rest of this system isn't set up for.
-function pickWarpTarget(sx,sy,mpp){
-  if(!predPatches||!predPatches.length)return null;
-  const patch=predPatches[0];
-  const el=patch.elements, b=patch.bodyRef;
-  if(!el||!b)return null;
-  if(!isFinite(el.a)&&el.e<1e-8)return null;
-  const bSc=w2s(b.x,b.y);
-  const bcx=bSc[0], bcy=bSc[1];
-  const invMpp=1/mpp;
-  let nuStart, nuEnd;
-  if(el.e<1){nuStart=-Math.PI; nuEnd=Math.PI;}
-  else {const nm=Math.acos(Math.max(-0.9999, -1/el.e))-0.01; nuStart=-nm; nuEnd=nm;}
-  const N=360; const step=(nuEnd-nuStart)/N;
-  let best=null;
-  for(let i=0;i<=N;i++){
-    const nu=nuStart+step*i;
-    const pt=conicPointAt(0,0,el,nu);
-    if(!pt)continue;
-    const ssx=bcx+pt.x*invMpp, ssy=bcy-pt.y*invMpp;
-    const d=Math.hypot(ssx-sx, ssy-sy);
-    if(!best||d<best.d)best={d, nu, ssx, ssy, wx:b.x+pt.x, wy:b.y+pt.y};
-  }
-  if(!best||best.d>30)return null; // 30 px tolerance — generous touch target
-  // Current true anomaly relative to this body
-  const dx=rkt.x-b.x, dy=rkt.y-b.y;
-  const dvx=rkt.vx-b.vx, dvy=rkt.vy-b.vy;
-  const cur=stateToElements(dx,dy,dvx,dvy,b.mu);
-  const dt=timeOfFlight(el, cur.nu, best.nu, b.mu);
-  const valid=isFinite(dt)&&dt>0.5; // need at least half-second skip to bother
-  return {patch, nu:best.nu, ssx:best.ssx, ssy:best.ssy, wx:best.wx, wy:best.wy, dt, valid};
-}
-
-// Apply a coast-skip: jump simTime + bodies + rocket state to the target.
-// Pure analytical propagation; runs in O(1) regardless of how far we skip.
-function executeWarpTo(target){
-  if(!target||!target.valid)return;
-  if(rkt.throttle>0){addNote('Throttle must be 0 to skip ahead');return;}
-  const patch=target.patch, el=patch.elements, b=patch.bodyRef;
-  const mu=b.mu;
-  const dt=target.dt;
-  // Advance the sim clock and reposition all on-rails bodies analytically.
-  simTime+=dt;
-  const newJD=jdStart+simTime/86400;
-  updateBodyPositions(newJD);
-  // Reconstruct the ship's state at the target true anomaly. Body has moved,
-  // so we add its NEW position/velocity to the conic-relative state.
-  const pt=conicPointAt(0,0,el,target.nu);
-  const ang=target.nu+el.omega;
-  const e=el.e, p=el.p;
-  const sqMuP=Math.sqrt(mu/p);
-  const hSign=el.h>0?1:-1;
-  const vr=sqMuP*e*Math.sin(target.nu)*hSign;
-  const vt=sqMuP*(1+e*Math.cos(target.nu))*hSign;
-  const cosA=Math.cos(ang), sinA=Math.sin(ang);
-  rkt.x=b.x+pt.x;
-  rkt.y=b.y+pt.y;
-  rkt.vx=vr*cosA-vt*sinA+b.vx;
-  rkt.vy=vr*sinA+vt*cosA+b.vy;
-  // Ship-time accumulation using current γ. Approximation: speed varies along
-  // an eccentric orbit, but γ−1 averaging only matters at relativistic cruise
-  // where the orbit is essentially hyperbolic and speed is near-constant.
-  const v2=rkt.vx*rkt.vx+rkt.vy*rkt.vy;
-  const beta2=Math.min(0.999999, v2/(C_LIGHT*C_LIGHT));
-  const gamma=beta2>1e-12?1/Math.sqrt(1-beta2):1;
-  shipTime+=dt/gamma;
-  addNote('Coasted '+fmtTime(dt)+' along trajectory');
-  updatePrediction();
-  _warpHover=null;
-}
-
-// Draw the hover marker on the predicted orbit. Called from render after
-// drawPrediction so it overlays the dashed conic.
-function drawWarpHover(){
-  if(!_warpHover)return;
-  const h=_warpHover;
-  ctx.save();
-  // Outer ring — color encodes validity.
-  ctx.strokeStyle=h.valid?'rgba(120,255,180,0.9)':'rgba(255,120,120,0.85)';
-  ctx.lineWidth=2;
-  ctx.beginPath();ctx.arc(h.ssx,h.ssy,12,0,Math.PI*2);ctx.stroke();
-  // Cross
-  ctx.beginPath();
-  ctx.moveTo(h.ssx-6,h.ssy);ctx.lineTo(h.ssx+6,h.ssy);
-  ctx.moveTo(h.ssx,h.ssy-6);ctx.lineTo(h.ssx,h.ssy+6);
-  ctx.stroke();
-  // Tooltip text — duration label above the marker
-  ctx.font='600 11px Orbitron,sans-serif';ctx.textAlign='center';
-  ctx.fillStyle='rgba(0,0,0,0.7)';
-  const txt=h.valid?('skip '+fmtTime(h.dt)):'cannot skip';
-  const w=ctx.measureText(txt).width+12;
-  ctx.fillRect(h.ssx-w/2,h.ssy-30,w,18);
-  ctx.fillStyle=h.valid?'rgba(180,255,210,1)':'rgba(255,180,180,1)';
-  ctx.fillText(txt,h.ssx,h.ssy-17);
-  ctx.restore();
-}
-
-// Track raw mouse position so we can update the hover marker each render
-// frame. Done in render rather than mousemove so the marker also updates as
-// the prediction itself re-renders (planet motion, camera pan).
-let _mouseX=0, _mouseY=0;
-window.addEventListener('mousemove',e=>{_mouseX=e.clientX; _mouseY=e.clientY;});
 
 function isThrottleLocked(){return TW_LEVELS[twIdx]>=10000;}
 function processInput(dt){if(phase!=='flying'||paused)return;
@@ -3373,26 +2863,19 @@ function backgroundStarAlpha(mpp){
   const eased=t*t*(3-2*t);
   return 1-eased;
 }
-// Real Milky Way panorama (ESO/Serge Brunier, 4096x2048 equirectangular).
-// Loaded from disk async; falls back to the procedural canvas if the file
-// is unavailable. Drawn statically (no camera-based parallax) so it never
-// drifts off-screen at extreme zoom-outs.
-let _milkyWayImg=null;
-(function _loadMilkyWay(){
-  const img=new Image();
-  img.decoding='async';
-  img.onload=()=>{_milkyWayImg=img;};
-  img.onerror=()=>{/* silent fallback to procedural */};
-  img.src='assets/milkyway.jpg';
-})();
-// Pre-rendered Milky Way band — fallback when the real image is unavailable.
+// Pre-rendered Milky Way band — generated once into an offscreen canvas, then
+// composited as the background BEFORE the star dots. Orientation tilted ~63° to
+// the map grid to roughly match the galactic plane vs ecliptic. Includes a
+// brighter galactic-center bulge and a few H II nebula blobs along the band.
 let _milkyWayCanvas=null;
 function generateMilkyWay(){
   const w=1024,h=512;
   const c=document.createElement('canvas');c.width=w;c.height=h;
   const g=c.getContext('2d');
+  // Faint background haze across the band
   for(let i=0;i<8000;i++){
     const u=Math.random(),v=Math.random();
+    // Concentrate density along center horizontal stripe with gaussian falloff
     const yC=h*0.5+(Math.random()-0.5)*h*0.45*(1-Math.pow(Math.abs(v-0.5)*2,1.5));
     const distFromCenterX=Math.abs(u-0.5)*2;
     const bulge=Math.exp(-distFromCenterX*distFromCenterX*4);
@@ -3400,6 +2883,7 @@ function generateMilkyWay(){
     const dustLane=Math.abs(yC-h*0.5)<h*0.04 && distFromCenterX<0.7 ? 0.35:1.0;
     const br=baseBr*dustLane;
     if(br<0.02)continue;
+    // Color: warm near center (Sgr A region, older stars), cool toward edges
     const warm=bulge;
     const r=Math.round(180+warm*70+Math.random()*20);
     const gC=Math.round(170+warm*50+Math.random()*25);
@@ -3408,17 +2892,19 @@ function generateMilkyWay(){
     const sz=Math.random()<0.05?2:1;
     g.fillRect(u*w,yC,sz,sz);
   }
+  // Brighter galactic-center bulge
   const bulge=g.createRadialGradient(w*0.5,h*0.5,0,w*0.5,h*0.5,w*0.18);
   bulge.addColorStop(0,'rgba(255,225,180,0.22)');
   bulge.addColorStop(0.4,'rgba(220,190,150,0.10)');
   bulge.addColorStop(1,'rgba(180,160,140,0)');
   g.fillStyle=bulge;g.fillRect(0,0,w,h);
+  // H II nebula blobs — colored emission regions
   const nebulae=[
-    {x:0.18,y:0.49,r:0.045,col:'255,120,140'},
-    {x:0.32,y:0.51,r:0.030,col:'140,160,255'},
-    {x:0.62,y:0.48,r:0.040,col:'255,160,100'},
-    {x:0.74,y:0.51,r:0.035,col:'160,220,200'},
-    {x:0.86,y:0.49,r:0.025,col:'200,140,220'}
+    {x:0.18,y:0.49,r:0.045,col:'255,120,140'},  // pinkish
+    {x:0.32,y:0.51,r:0.030,col:'140,160,255'},  // bluish reflection
+    {x:0.62,y:0.48,r:0.040,col:'255,160,100'},  // orange
+    {x:0.74,y:0.51,r:0.035,col:'160,220,200'},  // teal
+    {x:0.86,y:0.49,r:0.025,col:'200,140,220'}   // violet
   ];
   for(const n of nebulae){
     const nr=w*n.r;
@@ -3435,12 +2921,16 @@ function generateStars(){stars=[];
   const COL={W:'#fff',B:'#CEE5FF',Y:'#FFEEDD',O:'#FFD2A1',R:'#FFBBBB'};
   for(let i=0;i<500;i++){const r=Math.random(),k=SK[Math.random()*SK.length|0];
     const bright=r<.04,med=!bright&&r<.15;
+    // wdir: synthetic world-space direction for relativistic Doppler/beaming.
+    // We tie it loosely to screen position so the visual matches intuition:
+    // stars "in front" on screen blueshift when ship velocity points up-screen.
+    const wa=Math.atan2(0.5-Math.random()*1+(0.5-Math.random())*0.4,(0.5-Math.random())*2);
     stars.push({x:Math.random(),y:Math.random(),br:.12+Math.random()*.88,
       sz:bright?2:med?1.2:.7,col:COL[k],
       sprite:bright?fxSprites['s'+k+'B']:med?fxSprites['s'+k+'M']:null,
-      tw:Math.random()*6.28,twSpd:.3+Math.random()*1.5});}}
-// Notes live 8s (was 4); persistent panel shows last 4 with age-based fade.
-function addNote(txt){notes.push({txt,t:8});}
+      tw:Math.random()*6.28,twSpd:.3+Math.random()*1.5,
+      wdx:Math.cos(Math.random()*Math.PI*2),wdy:Math.sin(Math.random()*Math.PI*2)});}}
+function addNote(txt){notes.push({txt,t:4});}
 
 const PLANET_HAZE={
   Earth:{inner:'rgba(120,180,255,0.14)',mid:'rgba(60,130,255,0.06)',scale:.18,min:2,max:20},
@@ -3535,7 +3025,8 @@ function drawStarDisc(b,cx,cy,sr,time){
     ctx.lineWidth=Math.max(.5,Math.min(1.8,sr*.01));ctx.stroke();
   }
   // Photosphere rim stroke — fade to invisible when the sun fills the frame.
-  // Real sensors don't show a hard edge on saturated sources.
+  // Real sensors don't show a hard edge on saturated sources; the disc dissolves
+  // into bloom. Only stroke the rim when the sun is small/distant.
   const rimFade=isSun?Math.max(0,Math.min(1,(120-sr)/80)):1;
   if(rimFade>0.01){
     ctx.beginPath();ctx.arc(cx,cy,sr+.4,0,Math.PI*2);
@@ -3696,19 +3187,20 @@ function drawPlanetClouds(cx,cy,sr,name){
   ctx.save();
   ctx.beginPath();ctx.arc(cx,cy,cloudR,0,Math.PI*2);ctx.clip();
 
-  // Cloud shadows: cast the cloud texture onto the surface offset toward the
-  // anti-solar direction. Geometric ratio cloud_altitude / planet_radius ≈ 0.002;
-  // we exaggerate slightly (~1.2%) so it reads at typical zooms.
+  // Cloud shadows: project the cloud texture onto the surface, offset toward the
+  // anti-solar direction by (cloud_altitude / planet_radius). For Earth this is
+  // ~12km / 6371km ≈ 0.0019 rad of geometry, but visually we exaggerate slightly
+  // (~0.6% of radius) so the shadow reads at typical zoom levels.
   let sxw=0,syw=0;
-  if(name==='Earth'){const e=bodies.find(bb=>bb.name==='Earth');if(e){sxw=-e.x;syw=-e.y;}}
+  if(name==='Earth'){sxw=0-(bodies.find(b=>b.name==='Earth')||{x:0}).x;syw=0-(bodies.find(b=>b.name==='Earth')||{y:0}).y;}
   else {
-    const tc=bodies.find(bb=>bb.name==='Tau Ceti'),selfB=bodies.find(bb=>bb.name===name);
+    const tc=bodies.find(b=>b.name==='Tau Ceti'),selfB=bodies.find(b=>b.name===name);
     if(tc&&selfB){sxw=tc.x-selfB.x;syw=tc.y-selfB.y;}
   }
   const sLen=Math.hypot(sxw,syw);
   if(sLen>1e-6){
-    // anti-sun in screen space (w2s flips Y)
-    const adx=-sxw/sLen, ady=syw/sLen;
+    // anti-sun direction in screen space (w2s flips Y)
+    const adx=-sxw/sLen, ady=sxw===0&&syw===0?0:syw/sLen;
     const shadowOff=cloudR*0.012;
     ctx.globalCompositeOperation='multiply';
     ctx.globalAlpha=0.42;
@@ -3778,10 +3270,15 @@ function drawRealisticPlanet(cx,cy,sr,img,name){
     lb.addColorStop(1,'rgba(0,0,0,0.5)');
     og.fillStyle=lb;og.fillRect(0,0,res,res);
 
-    // (No baked atmosphere rim here — drawAtmosphere() handles the halo OUTSIDE the
-    //  planet circle in a directional, lighting-aware way. Baking a ring into the
-    //  cached texture would wrap blue all the way around the planet, leaking onto
-    //  the night side under any shadow mask. This stays clean.)
+    // Earth atmosphere rim glow
+    if(name==='Earth'){
+      og.globalCompositeOperation='screen';
+      const atm=og.createRadialGradient(r,r,r*.9,r,r,r*1.01);
+      atm.addColorStop(0,'rgba(0,0,0,0)');
+      atm.addColorStop(.5,'rgba(60,130,255,0.06)');
+      atm.addColorStop(1,'rgba(100,170,255,0.2)');
+      og.fillStyle=atm;og.beginPath();og.arc(r,r,r*1.01,0,Math.PI*2);og.fill();
+    }
 
     og.restore();
     _planetCache[name]={canvas:oc,key:cacheKey};
@@ -3811,87 +3308,111 @@ function applyPlanetLighting(cx,cy,sr,b){
   ctx.save();
   ctx.beginPath();ctx.arc(cx,cy,sr,0,Math.PI*2);ctx.clip();
 
-  // === Step 1: night-side shadow FIRST, fully opaque on the dark hemisphere ===
-  // This guarantees the night side is pure black before any additive lights paint
-  // on top. Previous bug: drawing city lights first, then shadow at α 0.96 left
-  // a blue/atmosphere tint bleeding through and killed the lights themselves.
+  // === Night-side city lights — Earth only, before the shadow multiplier ===
+  // Procedural: dim warm glow on the dark hemisphere, modulated by cloud cover so
+  // clouds occlude the lights from above (matches NASA Black Marble + cloud overlay).
+  if(b.name==='Earth'&&sr>8){
+    ctx.globalCompositeOperation='lighter';
+    // Cluster centers (rough continent positions — not real coords, just visually plausible).
+    // Drawn in a planet-local frame so they rotate with the surface.
+    const rotPeriod=86164;
+    const rotAng=((simTime/rotPeriod)*Math.PI*2)%(Math.PI*2);
+    const clusters=[
+      {a:0.1, r:0.55,sz:0.42,br:1.0},  // N. America east
+      {a:-0.3,r:0.50,sz:0.30,br:0.7},  // N. America west
+      {a:1.0, r:0.55,sz:0.38,br:1.0},  // Europe
+      {a:1.6, r:0.40,sz:0.32,br:0.9},  // E. Asia
+      {a:2.4, r:0.55,sz:0.36,br:0.95}, // Japan/Korea
+      {a:2.0, r:0.20,sz:0.28,br:0.5},  // India
+      {a:-1.2,r:0.45,sz:0.22,br:0.5},  // S. America
+      {a:1.3, r:-0.45,sz:0.20,br:0.4}, // Africa N.
+      {a:2.6, r:-0.55,sz:0.22,br:0.6}  // Australia
+    ];
+    // Anti-sun direction in screen space (where night side is centered)
+    const ax=-dx, ay=-dy;
+    // Build a screen-space basis: anti-sun axis + perpendicular
+    const px=-ay, py=ax;
+    for(const c of clusters){
+      // Position relative to planet center along (anti-sun) + perpendicular axes
+      const localAng=c.a+rotAng;
+      const lx=Math.cos(localAng)*c.r;
+      const ly=Math.sin(localAng)*c.r*0.65;  // foreshorten N-S
+      // Project: only show if on the night hemisphere (anti-sun side)
+      // Hemisphere test: localPoint dotted with (sun direction in local frame) < 0
+      // In screen space: shift center toward anti-sun by lx along anti-sun axis
+      const sx_=cx+ax*sr*lx+px*sr*ly;
+      const sy_=cy+ay*sr*lx+py*sr*ly;
+      // Night-side mask via local x along anti-sun direction (lx>0 = night side)
+      if(lx<0.05)continue;
+      const nightFac=Math.min(1,(lx-0.05)*4);
+      const lightR=sr*c.sz;
+      const lg=ctx.createRadialGradient(sx_,sy_,0,sx_,sy_,lightR);
+      const alpha=0.42*c.br*nightFac;
+      lg.addColorStop(0,'rgba(255,210,140,'+alpha+')');
+      lg.addColorStop(0.4,'rgba(255,180,90,'+(alpha*0.45)+')');
+      lg.addColorStop(1,'rgba(255,150,60,0)');
+      ctx.fillStyle=lg;
+      ctx.beginPath();ctx.arc(sx_,sy_,lightR,0,Math.PI*2);ctx.fill();
+    }
+    // Cloud occlusion: re-draw the cloud cache on top with multiply at low alpha
+    // so clouds dim the city lights below them.
+    const cc=_cloudDrawCache&&_cloudDrawCache['Earth'];
+    if(cc){
+      ctx.globalCompositeOperation='multiply';
+      ctx.globalAlpha=0.55;
+      ctx.drawImage(cc.canvas,cx-sr,cy-sr,sr*2,sr*2);
+      ctx.globalAlpha=1;
+    }
+    ctx.globalCompositeOperation='source-over';
+  }
+
+  // === Night-side shadow with sunset/airglow band ===
+  // Linear gradient along star→anti-star axis, with a warm sunset stripe at the
+  // terminator (Rayleigh-reddened grazing light) and faint blue-green airglow
+  // immediately past it on the night side. This is what makes real ISS photos
+  // read as photography — the terminator is never a hard gray line.
   const x0=cx+dx*sr, y0=cy+dy*sr;       // lit edge (toward star)
   const x1=cx-dx*sr, y1=cy-dy*sr;       // dark edge (away from star)
+  // Pass 1: darkening curve (slightly softer transition than before)
   const g=ctx.createLinearGradient(x0,y0,x1,y1);
   g.addColorStop(0.00,'rgba(0,0,0,0)');
   g.addColorStop(0.46,'rgba(0,0,0,0)');
-  g.addColorStop(0.52,'rgba(0,0,0,0.55)');
-  g.addColorStop(0.58,'rgba(0,0,0,0.90)');
-  g.addColorStop(0.64,'rgba(0,0,0,1)');
+  g.addColorStop(0.52,'rgba(0,0,0,0.45)');
+  g.addColorStop(0.58,'rgba(0,0,0,0.82)');
+  g.addColorStop(0.68,'rgba(0,0,0,0.96)');
+  g.addColorStop(0.82,'rgba(0,0,0,0.99)');
   g.addColorStop(1.00,'rgba(0,0,0,1)');
   ctx.fillStyle=g;ctx.fillRect(cx-sr,cy-sr,sr*2,sr*2);
-
-  // === Step 2: warm sunset stripe at the terminator (additive over the shadow) ===
+  // Pass 2: warm sunset band — narrow stripe at the dayside-near-terminator,
+  // Rayleigh-reddened orange-pink (real color of horizon at grazing geometry).
   if(sr>5){
     ctx.globalCompositeOperation='screen';
     const sunsetTint=b.name.startsWith('Tau Ceti ')?'255,130,80':'255,140,95';
     const sg=ctx.createLinearGradient(x0,y0,x1,y1);
     sg.addColorStop(0.30,'rgba('+sunsetTint+',0)');
-    sg.addColorStop(0.44,'rgba('+sunsetTint+',0.10)');
-    sg.addColorStop(0.50,'rgba('+sunsetTint+',0.28)');
-    sg.addColorStop(0.54,'rgba('+sunsetTint+',0.14)');
+    sg.addColorStop(0.44,'rgba('+sunsetTint+',0.08)');
+    sg.addColorStop(0.50,'rgba('+sunsetTint+',0.22)');
+    sg.addColorStop(0.54,'rgba('+sunsetTint+',0.12)');
     sg.addColorStop(0.60,'rgba('+sunsetTint+',0)');
     ctx.fillStyle=sg;ctx.fillRect(cx-sr,cy-sr,sr*2,sr*2);
+    // Pass 3: faint nightside airglow (atmospheric multi-scatter floor + sodium).
+    // Earth's airglow is dim green-blue; alien planets get their own tint.
+    if(b.name==='Earth'||b.name==='Tau Ceti e'){
+      const airTint=b.name==='Tau Ceti e'?'90,200,110':'55,110,95';
+      const ag=ctx.createLinearGradient(x0,y0,x1,y1);
+      ag.addColorStop(0.55,'rgba('+airTint+',0)');
+      ag.addColorStop(0.66,'rgba('+airTint+',0.08)');
+      ag.addColorStop(0.78,'rgba('+airTint+',0.04)');
+      ag.addColorStop(1.00,'rgba('+airTint+',0)');
+      ctx.fillStyle=ag;ctx.fillRect(cx-sr,cy-sr,sr*2,sr*2);
+    }
     ctx.globalCompositeOperation='source-over';
   }
 
-  // === Step 3: night-side city lights from REAL NASA Black Marble data ===
-  // The night-lights texture (earth_8k_night.jpg, equirectangular) was projected
-  // once at startup into a north-pole orthographic canvas to match earth-2k.jpg.
-  // We rotate it with the Earth's spin, mask it to the night hemisphere via a
-  // destination-in pass on an offscreen canvas, then composite 'lighter' onto
-  // the main canvas. Cloud-occluded by multiplying the cloud cache.
-  if(b.name==='Earth'&&sr>8&&textures.EarthNightPolar){
-    const rotPeriod=86164;
-    const rotAng=((simTime/rotPeriod)*Math.PI*2)%(Math.PI*2);
-    const layerSz=Math.max(64,Math.min(1024,Math.ceil(sr*2)));
-    const oc=document.createElement('canvas');oc.width=oc.height=layerSz;
-    const og=oc.getContext('2d');
-    // Draw rotated night map
-    og.save();
-    og.translate(layerSz/2,layerSz/2);
-    og.rotate(-rotAng);
-    og.drawImage(textures.EarthNightPolar,-layerSz/2,-layerSz/2,layerSz,layerSz);
-    og.restore();
-    // Boost warmth — city lights skew toward sodium/incandescent amber
-    og.globalCompositeOperation='source-atop';
-    og.fillStyle='rgba(255,200,140,0.35)';
-    og.fillRect(0,0,layerSz,layerSz);
-    og.globalCompositeOperation='source-over';
-    // Mask to night hemisphere via destination-in (gradient along sun→anti-sun axis)
-    const mxStart=layerSz/2+dx*layerSz/2, myStart=layerSz/2+dy*layerSz/2;
-    const mxEnd  =layerSz/2-dx*layerSz/2, myEnd  =layerSz/2-dy*layerSz/2;
-    const mg=og.createLinearGradient(mxStart,myStart,mxEnd,myEnd);
-    mg.addColorStop(0.00,'rgba(0,0,0,0)');
-    mg.addColorStop(0.48,'rgba(0,0,0,0)');
-    mg.addColorStop(0.62,'rgba(0,0,0,1)');
-    mg.addColorStop(1.00,'rgba(0,0,0,1)');
-    og.globalCompositeOperation='destination-in';
-    og.fillStyle=mg;og.fillRect(0,0,layerSz,layerSz);
-    og.globalCompositeOperation='source-over';
-    // Cloud occlusion within the offscreen layer
-    const cc=_cloudDrawCache&&_cloudDrawCache['Earth'];
-    if(cc){
-      og.globalCompositeOperation='destination-out';
-      og.globalAlpha=0.55;
-      og.drawImage(cc.canvas,0,0,layerSz,layerSz);
-      og.globalAlpha=1;
-      og.globalCompositeOperation='source-over';
-    }
-    // Composite masked layer onto planet with additive blend
-    ctx.save();
-    ctx.globalCompositeOperation='lighter';
-    ctx.globalAlpha=0.95;
-    ctx.drawImage(oc,cx-sr,cy-sr,sr*2,sr*2);
-    ctx.restore();
-  }
-
-  // === Sub-solar specular highlight (ocean glint on Earth, hot spot elsewhere) ===
+  // === Sub-solar specular highlight — ocean glint on Earth, hot spot elsewhere ===
+  // Real orbital photos always have a bright specular at the sub-solar point on
+  // water. Place a small bright hotspot slightly INSIDE the limb toward the star,
+  // not the broad "lit-side glow" we had before.
   if(sr>6){
     ctx.globalCompositeOperation='screen';
     const gx=cx+dx*sr*0.55, gy=cy+dy*sr*0.55;
@@ -3902,7 +3423,7 @@ function applyPlanetLighting(cx,cy,sr,b){
     gl.addColorStop(0.35,'rgba('+glintTint+',0.18)');
     gl.addColorStop(1,'rgba('+glintTint+',0)');
     ctx.fillStyle=gl;ctx.beginPath();ctx.arc(gx,gy,glintR,0,Math.PI*2);ctx.fill();
-    // Subtle wider lit-limb sheen
+    // Subtle wider lit-limb sheen — much fainter than original to avoid muddying
     const hx=cx+dx*sr*0.78, hy=cy+dy*sr*0.78;
     const rim=ctx.createRadialGradient(hx,hy,0,hx,hy,sr*0.9);
     const tint=b.name.startsWith('Tau Ceti ')?'255,210,150':'255,245,220';
@@ -3910,6 +3431,7 @@ function applyPlanetLighting(cx,cy,sr,b){
     rim.addColorStop(0.6,'rgba('+tint+',0.02)');
     rim.addColorStop(1,'rgba('+tint+',0)');
     ctx.fillStyle=rim;ctx.fillRect(cx-sr,cy-sr,sr*2,sr*2);
+    ctx.globalCompositeOperation='source-over';
   }
   ctx.restore();
 }
@@ -3953,6 +3475,33 @@ function drawBody(b,mpp){
   if(b.name==='Jupiter')drawJupiterSwirls(cx,cy,sr);
   // Day/night terminator shading based on the body's host star
   applyPlanetLighting(cx,cy,sr,b);
+  // Relativistic Doppler tint — overlay a multiply circle when ship is fast.
+  // Direction = ship → body in world coords. Sign convention matches dopplerFactor.
+  const _rv2b=rkt.vx*rkt.vx+rkt.vy*rkt.vy;
+  if(_rv2b>(C_LIGHT*0.01)*(C_LIGHT*0.01)&&sr>1.5){
+    const dxw=b.x-rkt.x,dyw=b.y-rkt.y;
+    const D=dopplerFactor(dxw,dyw,rkt.vx,rkt.vy);
+    if(Math.abs(Math.log(D))>0.05){
+      const rgb=dopplerTintRGB(D);
+      const strength=Math.min(0.7,Math.abs(Math.log(D))*0.55);
+      ctx.save();
+      ctx.globalCompositeOperation='multiply';
+      ctx.globalAlpha=strength;
+      ctx.fillStyle=tintRGBA(rgb,1);
+      ctx.beginPath();ctx.arc(cx,cy,sr,0,Math.PI*2);ctx.fill();
+      ctx.restore();
+      // Beaming: slight additive brightness on the approaching side
+      const beam=dopplerBeaming(D);
+      if(beam>1.05){
+        ctx.save();
+        ctx.globalCompositeOperation='screen';
+        ctx.globalAlpha=Math.min(0.45,(beam-1)*0.25);
+        ctx.fillStyle=tintRGBA(rgb,1);
+        ctx.beginPath();ctx.arc(cx,cy,sr,0,Math.PI*2);ctx.fill();
+        ctx.restore();
+      }
+    }
+  }
   // Filter labels by zoom level to prevent clutter
   const showLabel=sr>3&&sr<400&&(
     cam.zoom<10.5|| // normal zoom: show all
@@ -3965,39 +3514,76 @@ function drawBody(b,mpp){
 function drawSunGlow(mpp){
   const[cx,cy]=w2s(0,0),sr=R_SUN/mpp;if(sr<0.3||sr>8000)return;
   const pulse=1+Math.sin(performance.now()*.0012)*.04;
-  const glowR=Math.max(sr*8,40)*pulse;
+  const glowR=Math.max(sr*8,40)*pulse; // massive glow even when sun is tiny
   ctx.save();ctx.globalCompositeOperation='screen';
+  // Layer 1: enormous soft corona — PURE WHITE. Sun in vacuum is 5778K blackbody = white.
+  // Atmospheric Rayleigh reddening (the "yellow sun" we see from ground) is handled by
+  // the atmosphere shader downstream, not baked into the source.
   const g1=ctx.createRadialGradient(cx,cy,sr*.1,cx,cy,glowR);
-  g1.addColorStop(0,'rgba(255,255,255,0.9)');
-  g1.addColorStop(0.02,'rgba(255,255,240,0.7)');
-  g1.addColorStop(0.08,'rgba(255,240,180,0.3)');
-  g1.addColorStop(0.25,'rgba(255,200,80,0.1)');
-  g1.addColorStop(0.5,'rgba(255,150,40,0.03)');
-  g1.addColorStop(1,'rgba(200,80,20,0)');
+  g1.addColorStop(0,'rgba(255,255,255,0.92)');
+  g1.addColorStop(0.02,'rgba(255,255,252,0.72)');
+  g1.addColorStop(0.08,'rgba(252,252,248,0.32)');
+  g1.addColorStop(0.25,'rgba(248,248,245,0.10)');
+  g1.addColorStop(0.5,'rgba(240,240,238,0.03)');
+  g1.addColorStop(1,'rgba(220,220,218,0)');
   ctx.fillStyle=g1;ctx.beginPath();ctx.arc(cx,cy,glowR,0,Math.PI*2);ctx.fill();
+  // Layer 2: blinding white core
   const coreR=Math.max(sr*2,8);
   const g2=ctx.createRadialGradient(cx,cy,0,cx,cy,coreR);
   g2.addColorStop(0,'rgba(255,255,255,1)');
-  g2.addColorStop(0.3,'rgba(255,255,230,0.8)');
-  g2.addColorStop(0.7,'rgba(255,230,160,0.3)');
-  g2.addColorStop(1,'rgba(255,200,80,0)');
+  g2.addColorStop(0.3,'rgba(255,255,252,0.82)');
+  g2.addColorStop(0.7,'rgba(250,250,248,0.32)');
+  g2.addColorStop(1,'rgba(240,240,238,0)');
   ctx.fillStyle=g2;ctx.beginPath();ctx.arc(cx,cy,coreR,0,Math.PI*2);ctx.fill();
-  if(sr<200){
-    const spikeLen=glowR*0.7;
-    const spikeAlpha=Math.min(0.25,3/(sr+1));
-    ctx.strokeStyle='rgba(255,240,200,'+spikeAlpha+')';
+  // Layer 3: diffraction spikes — scale with source size, more flare when sun fills frame
+  {
+    const spikeLen=glowR*Math.min(1.3,0.7+sr*0.003);
+    const spikeAlpha=Math.min(0.45,3/(sr+1)+sr*0.0008);
+    ctx.strokeStyle='rgba(250,250,248,'+spikeAlpha+')';
     ctx.lineWidth=Math.max(0.5,sr*0.04);
     ctx.beginPath();ctx.moveTo(cx-spikeLen,cy);ctx.lineTo(cx+spikeLen,cy);ctx.stroke();
     ctx.beginPath();ctx.moveTo(cx,cy-spikeLen);ctx.lineTo(cx,cy+spikeLen);ctx.stroke();
-    ctx.strokeStyle='rgba(255,240,200,'+spikeAlpha*0.4+')';
+    // Diagonal spikes (fainter)
+    ctx.strokeStyle='rgba(250,250,248,'+spikeAlpha*0.4+')';
     const d=spikeLen*0.5;
     ctx.beginPath();ctx.moveTo(cx-d,cy-d);ctx.lineTo(cx+d,cy+d);ctx.stroke();
     ctx.beginPath();ctx.moveTo(cx+d,cy-d);ctx.lineTo(cx-d,cy+d);ctx.stroke();
   }
+  // Layer 4: lens flare ghost dots when sun is large in frame.
+  // Ghosts appear along the line from sun-center through screen-center, at fractional
+  // distances — real lens flare geometry from multiple optical surfaces.
+  if(sr>30){
+    const cxS=W*0.5,cyS=H*0.5;
+    const dx=cxS-cx,dy=cyS-cy;
+    const ghostStrength=Math.min(0.5,(sr-30)/300);
+    const ghosts=[
+      {t:0.35,sz:sr*0.55,a:0.18,col:'250,235,210'},
+      {t:0.62,sz:sr*0.85,a:0.10,col:'220,190,255'},
+      {t:0.88,sz:sr*0.40,a:0.14,col:'200,230,255'},
+      {t:1.18,sz:sr*0.65,a:0.08,col:'255,210,170'},
+      {t:1.42,sz:sr*0.30,a:0.12,col:'200,255,210'}
+    ];
+    for(const g of ghosts){
+      const gx=cx+dx*g.t,gy=cy+dy*g.t;
+      const gg=ctx.createRadialGradient(gx,gy,0,gx,gy,g.sz);
+      gg.addColorStop(0,'rgba('+g.col+','+(g.a*ghostStrength)+')');
+      gg.addColorStop(0.6,'rgba('+g.col+','+(g.a*ghostStrength*0.3)+')');
+      gg.addColorStop(1,'rgba('+g.col+',0)');
+      ctx.fillStyle=gg;ctx.beginPath();ctx.arc(gx,gy,g.sz,0,Math.PI*2);ctx.fill();
+    }
+    // Anamorphic horizontal streak through sun center
+    const streakLen=Math.min(W*0.9,sr*12);
+    const streakA=Math.min(0.22,ghostStrength*0.7);
+    const sg=ctx.createLinearGradient(cx-streakLen,cy,cx+streakLen,cy);
+    sg.addColorStop(0,'rgba(180,210,255,0)');
+    sg.addColorStop(0.45,'rgba(200,225,255,'+streakA+')');
+    sg.addColorStop(0.5,'rgba(240,245,255,'+(streakA*1.5)+')');
+    sg.addColorStop(0.55,'rgba(200,225,255,'+streakA+')');
+    sg.addColorStop(1,'rgba(180,210,255,0)');
+    ctx.fillStyle=sg;ctx.fillRect(cx-streakLen,cy-Math.max(2,sr*0.08),streakLen*2,Math.max(4,sr*0.16));
+  }
   ctx.restore();
 }
-
-
 function drawTauCetiGlow(mpp){
   const tc=bodies.find(b=>b.name==='Tau Ceti');if(!tc)return;
   const[cx,cy]=w2s(tc.x,tc.y),sr=tc.radius/mpp;if(sr<.5||sr>5000)return;
@@ -4036,7 +3622,7 @@ function drawSaturnRings(mpp){
 function drawPlanetOrbits(mpp){
   const[cx,cy]=w2s(0,0);
   for(const p of PLANETS){
-    const a=p.a0*AU,sr=a/mpp;if(sr<5||sr>12000)continue;
+    const a=p.a0*AU*(COMPACT_SOLAR_SYSTEM?SOLAR_DISTANCE_SCALE:1),sr=a/mpp;if(sr<5||sr>12000)continue;
     // Brighter orbits with planet's own color
     ctx.strokeStyle=p.color.replace(')',',0.18)').replace('rgb','rgba').replace('#','');
     // Use hex color with alpha
@@ -4448,76 +4034,114 @@ function drawMoonOrbit(mpp){
   }
 }
 
-// Unified atmosphere drawing — same visual pattern for every planet so the
-// "ground line + atmosphere line" relationship reads consistently. Each planet
-// passes its own colors and altitude scales; the structure is identical.
-function drawAtmosphereShell(cx,cy,sr,cfg){
-  if(sr<1.4)return;
-  const innerH=cfg.innerH;   // inner shell height in screen pixels
-  const outerH=cfg.outerH;   // outer shell extent
-  ctx.save();
-  if(sr<6000){
-    ctx.globalCompositeOperation='screen';
-    if(outerH>1){
-      const outerGlow=ctx.createRadialGradient(cx,cy,sr,cx,cy,sr+outerH);
-      outerGlow.addColorStop(0,'rgba('+cfg.outerCol+',0.14)');
-      outerGlow.addColorStop(0.3,'rgba('+cfg.outerCol+',0.07)');
-      outerGlow.addColorStop(1,'rgba('+cfg.outerCol+',0)');
-      ctx.beginPath();ctx.arc(cx,cy,sr+outerH,0,Math.PI*2);ctx.fillStyle=outerGlow;ctx.fill();
-    }
-    if(innerH>0.5){
-      const shellGlow=ctx.createRadialGradient(cx,cy,sr,cx,cy,sr+innerH);
-      shellGlow.addColorStop(0,'rgba('+cfg.innerCol+',0.22)');
-      shellGlow.addColorStop(0.5,'rgba('+cfg.midCol+',0.13)');
-      shellGlow.addColorStop(1,'rgba('+cfg.outerCol+',0)');
-      ctx.beginPath();ctx.arc(cx,cy,sr+innerH,0,Math.PI*2);ctx.fillStyle=shellGlow;ctx.fill();
-    }
-    ctx.globalCompositeOperation='source-over';
-  }
-  // Atmosphere edge line — same dash style every planet, only color differs.
-  if(innerH>6){
-    ctx.beginPath();ctx.arc(cx,cy,sr+innerH,0,Math.PI*2);
-    ctx.strokeStyle='rgba('+cfg.lineCol+',0.35)';
-    ctx.lineWidth=Math.max(1,Math.min(2.5,innerH*0.05));
-    ctx.setLineDash([Math.max(4,innerH*0.08),Math.max(3,innerH*0.05)]);
-    ctx.stroke();ctx.setLineDash([]);
-    if(cfg.label&&innerH>20&&innerH<3000){
-      ctx.font='500 9px Exo 2,sans-serif';ctx.textAlign='left';
-      ctx.fillStyle='rgba('+cfg.lineCol+',0.55)';
-      ctx.fillText(cfg.label,cx+sr+innerH+6,cy-4);
-    }
-  }
-  ctx.restore();
-}
-
 function drawAtmosphere(mpp){
   if(!earth)return;
   const[cx,cy]=w2s(earth.x,earth.y),sr=R_E/mpp;
-  drawAtmosphereShell(cx,cy,sr,{
-    innerH: 1e5/mpp,         // 100 km — Karman line
-    outerH: 5e5/mpp,         // 500 km — exosphere
-    innerCol:'120,175,255',  // Rayleigh inner (β-weighted blue)
-    midCol:  '70,140,255',
-    outerCol:'45,105,255',
-    lineCol: '140,200,255',
-    label:   'KARMAN LINE'
-  });
+  if(sr<1.4)return;
+  // Real atmosphere heights in screen pixels
+  const atmH=1e5/mpp;   // 100 km — Karman line
+  const exoH=5e5/mpp;   // 500 km — exosphere
+  ctx.save();
+
+  // Gradient hazes — Rayleigh-weighted blue (β ratio R:G:B ≈ 1 : 2.33 : 5.71).
+  // Real atmospheric scattering pushes blue much harder than green or red, so the
+  // outer skirt is deep pure blue and the inner shell is the more familiar sky blue.
+  if(sr<6000){
+    ctx.globalCompositeOperation='screen';
+    if(exoH>1){
+      const outerGlow=ctx.createRadialGradient(cx,cy,sr,cx,cy,sr+exoH);
+      outerGlow.addColorStop(0,'rgba(45,105,255,0.14)');
+      outerGlow.addColorStop(0.3,'rgba(60,120,250,0.07)');
+      outerGlow.addColorStop(1,'rgba(60,120,250,0)');
+      ctx.beginPath();ctx.arc(cx,cy,sr+exoH,0,Math.PI*2);ctx.fillStyle=outerGlow;ctx.fill();
+    }
+    if(atmH>0.5){
+      const shellGlow=ctx.createRadialGradient(cx,cy,sr,cx,cy,sr+atmH);
+      shellGlow.addColorStop(0,'rgba(120,175,255,0.22)');
+      shellGlow.addColorStop(0.5,'rgba(70,140,255,0.13)');
+      shellGlow.addColorStop(1,'rgba(45,105,255,0)');
+      ctx.beginPath();ctx.arc(cx,cy,sr+atmH,0,Math.PI*2);ctx.fillStyle=shellGlow;ctx.fill();
+    }
+    ctx.globalCompositeOperation='source-over';
+  }
+
+  // Karman line — only when separated from the texture enough to read as altitude.
+  if(atmH>6){
+    ctx.beginPath();ctx.arc(cx,cy,sr+atmH,0,Math.PI*2);
+    ctx.strokeStyle='rgba(140,200,255,0.35)';
+    ctx.lineWidth=Math.max(1,Math.min(2.5,atmH*0.05));
+    ctx.setLineDash([Math.max(4,atmH*0.08),Math.max(3,atmH*0.05)]);
+    ctx.stroke();ctx.setLineDash([]);
+  }
+
+  ctx.restore();
 }
 
 function drawTauCetiEAtmosphere(mpp){
   const b=bodies.find(b=>b.name==='Tau Ceti e');if(!b)return;
-  const[cx,cy]=w2s(b.x,b.y),sr=b.radius/mpp;
-  // Use the SAME shell drawing pattern as Earth — only colors and altitudes differ.
-  // The "Taumoeba collection zone" is shown as the labeled atmosphere edge line.
-  drawAtmosphereShell(cx,cy,sr,{
-    innerH: 200000/mpp,      // 200 km — Taumoeba collection zone (gameplay-meaningful)
-    outerH: 400000/mpp,      // 400 km — outer haze extent (matches Earth's exo ratio)
-    innerCol:'130,230,140',  // alien green, similar saturation to Earth's blue
-    midCol:  '90,200,110',
-    outerCol:'60,160,80',
-    lineCol: '140,255,160',
-    label:   'TAUMOEBA ZONE'
-  });
+  const[cx,cy]=w2s(b.x,b.y),sr=b.radius/mpp;if(sr<2)return;
+  const collectH=200000/mpp;  // 200 km — Taumoeba collection zone
+  const atmH=250000/mpp;      // 250 km — visible atmosphere edge
+  ctx.save();
+
+  // Atmosphere haze — thick alien green, pulsing with Astrophage activity
+  if(sr<5000){
+    ctx.globalCompositeOperation='screen';
+    const aPulse=1+0.08*Math.sin(performance.now()*.0008);
+    // Deep outer haze — extends far from planet
+    if(atmH>0.5){
+      const outer=ctx.createRadialGradient(cx,cy,sr*.95,cx,cy,sr+atmH*1.3*aPulse);
+      outer.addColorStop(0,'rgba(90,240,110,0.22)');
+      outer.addColorStop(0.35,'rgba(70,200,90,0.14)');
+      outer.addColorStop(0.7,'rgba(50,160,70,0.06)');
+      outer.addColorStop(1,'rgba(30,120,50,0)');
+      ctx.beginPath();ctx.arc(cx,cy,sr+atmH*1.3*aPulse,0,Math.PI*2);ctx.fillStyle=outer;ctx.fill();
+    }
+    // Inner bright Taumoeba-rich layer — vivid green
+    if(collectH>0.3){
+      const inner=ctx.createRadialGradient(cx,cy,sr,cx,cy,sr+collectH);
+      inner.addColorStop(0,'rgba(140,255,120,0.28)');
+      inner.addColorStop(0.4,'rgba(110,240,90,0.18)');
+      inner.addColorStop(0.75,'rgba(80,200,70,0.08)');
+      inner.addColorStop(1,'rgba(60,160,50,0)');
+      ctx.beginPath();ctx.arc(cx,cy,sr+collectH,0,Math.PI*2);ctx.fillStyle=inner;ctx.fill();
+    }
+    // Astrophage-tinted rim glow — warm amber edge where Astrophage concentrates
+    if(sr>15){
+      const rim=ctx.createRadialGradient(cx,cy,sr*.92,cx,cy,sr*1.06);
+      rim.addColorStop(0,'rgba(0,0,0,0)');
+      rim.addColorStop(0.6,'rgba(180,255,80,0.04)');
+      rim.addColorStop(0.85,'rgba(200,255,100,0.1)');
+      rim.addColorStop(1,'rgba(255,220,80,0.06)');
+      ctx.beginPath();ctx.arc(cx,cy,sr*1.06,0,Math.PI*2);ctx.fillStyle=rim;ctx.fill();
+    }
+    ctx.globalCompositeOperation='source-over';
+  }
+
+  // TAUMOEBA COLLECTION LINE — visible once it separates from the planet edge.
+  // This is the altitude the chain tip needs to reach
+  if(collectH>6){
+    ctx.beginPath();ctx.arc(cx,cy,sr+collectH,0,Math.PI*2);
+    ctx.strokeStyle='rgba(80,255,80,0.5)';
+    ctx.lineWidth=Math.max(1,Math.min(2.5,collectH*0.03));
+    ctx.setLineDash([Math.max(4,collectH*0.06),Math.max(3,collectH*0.04)]);
+    ctx.stroke();ctx.setLineDash([]);
+    // Label
+    if(collectH>20&&collectH<3000){
+      ctx.font='500 9px Exo 2,sans-serif';ctx.textAlign='left';ctx.fillStyle='rgba(80,255,80,0.5)';
+      ctx.fillText('TAUMOEBA ZONE',cx+sr+collectH+6,cy-4);
+    }
+  }
+
+  // Atmosphere edge at 250km — visible once it separates from the planet edge.
+  if(atmH>8){
+    ctx.beginPath();ctx.arc(cx,cy,sr+atmH,0,Math.PI*2);
+    ctx.strokeStyle='rgba(140,255,140,0.25)';
+    ctx.lineWidth=Math.max(0.5,Math.min(1.5,atmH*0.02));
+    ctx.stroke();
+  }
+
+  ctx.restore();
 }
 
 // ═══════════════════════════════════════════
@@ -4837,7 +4461,7 @@ function drawSOI(mpp){
   if(!moon)return;const[mx,my]=w2s(moon.x,moon.y),sr=MOON_SOI/mpp;
   if(sr>5&&sr<5000){ctx.beginPath();ctx.arc(mx,my,sr,0,Math.PI*2);ctx.strokeStyle='rgba(255,190,40,0.15)';ctx.lineWidth=1;ctx.setLineDash([6,4]);ctx.stroke();ctx.setLineDash([]);}
   // Earth SOI
-  if(!earth)return;const[ex,ey]=w2s(earth.x,earth.y),esr=9.25e8/mpp;
+  if(!earth)return;const[ex,ey]=w2s(earth.x,earth.y),esr=PLANETS[EARTH_IDX].soi/mpp;
   if(esr>10&&esr<4000){ctx.beginPath();ctx.arc(ex,ey,esr,0,Math.PI*2);ctx.strokeStyle='rgba(80,140,255,0.08)';ctx.lineWidth=.5;ctx.setLineDash([8,6]);ctx.stroke();ctx.setLineDash([]);}
 }
 
@@ -4921,50 +4545,15 @@ function drawVelocityArrow(){
 }
 
 function drawNavMarkers(){
-  const[sx,sy]=w2s(rkt.x,rkt.y),v=getRelVel(),spd=Math.hypot(v.vx,v.vy);
-  // Prograde/retrograde markers (existing behavior, now using semantic tokens).
-  if(spd>=2){
-    const dist=50,a=Math.atan2(-v.vy,v.vx);
-    const pgx=sx+Math.cos(a)*dist,pgy=sy+Math.sin(a)*dist;
-    ctx.strokeStyle=UI.C.GOOD;ctx.fillStyle=UI.C.GOOD;ctx.lineWidth=1.5;
-    ctx.beginPath();ctx.arc(pgx,pgy,6,0,Math.PI*2);ctx.stroke();
-    ctx.beginPath();ctx.arc(pgx,pgy,1.2,0,Math.PI*2);ctx.fill();
-    const rgx=sx+Math.cos(a+Math.PI)*dist,rgy=sy+Math.sin(a+Math.PI)*dist;
-    ctx.strokeStyle=UI.C.CRIT;ctx.lineWidth=1.5;
-    ctx.beginPath();ctx.arc(rgx,rgy,6,0,Math.PI*2);ctx.stroke();
-    ctx.beginPath();ctx.moveTo(rgx-3,rgy-3);ctx.lineTo(rgx+3,rgy+3);ctx.moveTo(rgx+3,rgy-3);ctx.lineTo(rgx-3,rgy+3);ctx.stroke();
-  }
-  // Off-screen target arrow: when the camera target is a body but it's not
-  // visible on screen, draw a pointer at the screen edge so player knows
-  // which way to look. Pure navigation aid.
-  if(cam.target&&cam.target!=='rocket'&&cam.target!=='free'&&cam.target!=='system'){
-    const tb=bodies.find(b=>b.name===cam.target);
-    if(tb){
-      const[tx,ty]=w2s(tb.x,tb.y);
-      const margin=40;
-      const onScreen=tx>margin&&tx<W-margin&&ty>margin&&ty<H-margin;
-      if(!onScreen){
-        const cx=W/2,cy=H/2;
-        const dx=tx-cx,dy=ty-cy;
-        const ang=Math.atan2(dy,dx);
-        // Project to screen edge with margin
-        const ex=Math.cos(ang),ey=Math.sin(ang);
-        const tMax=Math.min((W/2-margin)/Math.abs(ex||1e-9),(H/2-margin)/Math.abs(ey||1e-9));
-        const ax=cx+ex*tMax,ay=cy+ey*tMax;
-        ctx.save();
-        ctx.translate(ax,ay);ctx.rotate(ang);
-        // Filled chevron pointing outward
-        ctx.beginPath();
-        ctx.moveTo(0,0);ctx.lineTo(-14,-7);ctx.lineTo(-10,0);ctx.lineTo(-14,7);ctx.closePath();
-        ctx.fillStyle='rgba(98,181,245,0.75)';ctx.fill();
-        ctx.strokeStyle='rgba(0,0,0,0.6)';ctx.lineWidth=1;ctx.stroke();
-        ctx.restore();
-        ctx.font='600 10px Orbitron,sans-serif';ctx.textAlign='center';
-        ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillText(cam.target,ax+1,ay-13);
-        ctx.fillStyle=UI.C.INFO;ctx.fillText(cam.target,ax,ay-14);
-      }
-    }
-  }
+  const[sx,sy]=w2s(rkt.x,rkt.y),v=getRelVel(),spd=Math.hypot(v.vx,v.vy);if(spd<2)return;
+  const dist=50,a=Math.atan2(-v.vy,v.vx);
+  const pgx=sx+Math.cos(a)*dist,pgy=sy+Math.sin(a)*dist;
+  ctx.strokeStyle='#0c0';ctx.fillStyle='#0c0';ctx.lineWidth=1.5;
+  ctx.beginPath();ctx.arc(pgx,pgy,6,0,Math.PI*2);ctx.stroke();
+  ctx.beginPath();ctx.arc(pgx,pgy,1.2,0,Math.PI*2);ctx.fill();
+  const rgx=sx+Math.cos(a+Math.PI)*dist,rgy=sy+Math.sin(a+Math.PI)*dist;
+  ctx.strokeStyle='#c44';ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(rgx,rgy,6,0,Math.PI*2);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(rgx-3,rgy-3);ctx.lineTo(rgx+3,rgy+3);ctx.moveTo(rgx+3,rgy-3);ctx.lineTo(rgx-3,rgy+3);ctx.stroke();
 }
 
 function drawISS(mpp){
@@ -5196,15 +4785,9 @@ function drawChain(mpp){
 let pauseMenuButtons=[];
 function drawPauseMenu(){
   if(!paused)return;
-  // Heavy dim + CSS filter blur on the next frame (one-shot, restored on unpause).
-  // Two-pass approach: deeper alpha + faint inset glow ring for focus.
-  ctx.fillStyle='rgba(0,0,0,0.78)';ctx.fillRect(0,0,W,H);
-  const radial=ctx.createRadialGradient(W/2,H/2,Math.min(W,H)*0.25,W/2,H/2,Math.max(W,H)*0.75);
-  radial.addColorStop(0,'rgba(0,0,0,0)');
-  radial.addColorStop(1,'rgba(0,0,0,0.55)');
-  ctx.fillStyle=radial;ctx.fillRect(0,0,W,H);
-  const U=UI.U;
-  const pw=Math.round(320*U),ph=Math.round(300*U),px=W/2-pw/2,py=H/2-ph/2;
+  // Dim overlay
+  ctx.fillStyle='rgba(0,0,0,0.65)';ctx.fillRect(0,0,W,H);
+  const pw=320,ph=300,px=W/2-pw/2,py=H/2-ph/2;
   ctx.fillStyle='rgba(2,8,22,0.97)';ctx.fillRect(px,py,pw,ph);
   ctx.strokeStyle='rgba(255,170,50,0.25)';ctx.lineWidth=2;ctx.strokeRect(px,py,pw,ph);
   // Title
@@ -5239,39 +4822,54 @@ function render(){
   const mpp=Math.pow(10,cam.zoom);ctx.fillStyle='#000';ctx.fillRect(0,0,W,H);
   const _st=performance.now()*.001;
   const starAlpha=backgroundStarAlpha(mpp);
-  // Milky Way band — drawn statically, tilted ~63° to approximate the galactic
-  // plane vs ecliptic angle. NO camera-based translation: stars and the galaxy
-  // are effectively at infinity, so they don't shift when the local camera
-  // pans across a few AU. The old (-cam.x * 1e-13) % 1 produced negative
-  // modulo results at interstellar scales (cam.x ~ 1e17), which caused the
-  // visible black border bug at extreme zoom-out.
-  const mwSrc=_milkyWayImg||_milkyWayCanvas;
-  if(mwSrc&&starAlpha>.04){
+  // Milky Way band — drawn BEFORE the star dots, tilted ~63° to the grid to
+  // approximate the galactic plane vs ecliptic angle. Drifts slowly with camera.
+  if(_milkyWayCanvas&&starAlpha>.04){
     const mwTilt=63*Math.PI/180;
+    const dx=(-cam.x*1e-13)%1;
     ctx.save();
     ctx.globalAlpha=0.55*starAlpha;
     ctx.translate(W*0.5,H*0.5);
     ctx.rotate(mwTilt);
-    const mw=mwSrc.width||mwSrc.naturalWidth||1024;
-    const mh=mwSrc.height||mwSrc.naturalHeight||512;
-    // Oversize draw so the rotated rectangle still covers all corners of the
-    // viewport. Diagonal of a rotated AABB is sqrt(W^2+H^2); we use 1.8× max
-    // dimension for headroom.
-    const drawW=Math.max(W,H)*1.9, drawH=drawW*mh/mw;
-    ctx.drawImage(mwSrc,-drawW*0.5,-drawH*0.5,drawW,drawH);
+    // Tile horizontally so it always fills the screen across rotation
+    const mw=_milkyWayCanvas.width,mh=_milkyWayCanvas.height;
+    const drawW=Math.max(W,H)*1.6,drawH=drawW*mh/mw;
+    const offX=((dx*drawW)%drawW)-drawW;
+    for(let tx=offX;tx<drawW;tx+=drawW){
+      ctx.drawImage(_milkyWayCanvas,tx-drawW*0.5,-drawH*0.5,drawW,drawH);
+    }
     ctx.restore();
   }
-  // Background star field — rock-steady. Real stars are at infinity; ISS
-  // footage shows zero parallax against local-frame camera motion. The old
-  // (cam.x*1e-12)%1 wrapping drifted way too fast at interstellar scales and
-  // would wrap into negative coords, leaving black bars on screen edges.
+  // Precompute whether SR visuals are worth applying — only kicks in past ~1% c
+  const _rv2=rkt.vx*rkt.vx+rkt.vy*rkt.vy;
+  const _srActive=_rv2>(C_LIGHT*0.01)*(C_LIGHT*0.01);
+  // Slow parallax pan with camera — real stars are at infinity but a tiny drift
+  // sells "this is space" instead of "static background layer".
+  const _parX=(-cam.x*1e-12)%1, _parY=(cam.y*1e-12)%1;
   if(starAlpha>.02){
-    for(const s of stars){
-      const twinkle=0.98+0.02*Math.sin(_st*s.twSpd+s.tw);
-      ctx.globalAlpha=s.br*twinkle*starAlpha;
-      const sX=s.x*W, sY=s.y*H;
-      if(s.sprite){ctx.drawImage(s.sprite,sX-s.sprite.width*.5,sY-s.sprite.height*.5);}
-      else{ctx.fillStyle=s.col;ctx.fillRect(sX,sY,s.sz,s.sz);}
+    // Vacuum: no atmospheric scintillation, so almost no twinkle. Real ISS footage
+    // shows stars rock-steady. Tiny residual (0.02) just to avoid dead-looking dots.
+    for(const s of stars){const twinkle=0.98+0.02*Math.sin(_st*s.twSpd+s.tw);
+      let alpha=s.br*twinkle*starAlpha;
+      let drawCol=s.col,useSprite=!!s.sprite;
+      if(_srActive){
+        const D=dopplerFactor(s.wdx,s.wdy,rkt.vx,rkt.vy);
+        alpha*=dopplerBeaming(D);
+        if(alpha<0.005)continue; // beamed away from us — skip
+        // Color shift: tint the star toward blue (D>1) or red (D<1)
+        const rgb=dopplerTintRGB(D);
+        const r=Math.round(Math.max(0,Math.min(255,255*rgb[0])));
+        const g=Math.round(Math.max(0,Math.min(255,255*rgb[1])));
+        const b=Math.round(Math.max(0,Math.min(255,255*rgb[2])));
+        drawCol='rgb('+r+','+g+','+b+')';
+        useSprite=false; // sprites are baked-color; fall back to flat pixel under SR
+      }
+      ctx.globalAlpha=Math.min(1,alpha);
+      // Apply tiny parallax shift so the field drifts with camera motion.
+      const sX=((s.x+_parX)%1)*W;
+      const sY=((s.y+_parY)%1)*H;
+      if(useSprite){ctx.drawImage(s.sprite,sX-s.sprite.width*.5,sY-s.sprite.height*.5);}
+      else{ctx.fillStyle=drawCol;ctx.fillRect(sX,sY,s.sz,s.sz);}
     }
   }
   ctx.globalAlpha=1;
@@ -5296,18 +4894,108 @@ function render(){
   drawSolarExposure(mpp);
 
   if(phase==='flying'){
-    drawPrediction(mpp);
-    // Hover marker for path-skip: refresh per frame using current mouse pos
-    // so it tracks both cursor movement and the orbit's natural redraw.
-    if(phase==='flying'&&!paused&&rkt.throttle<=0&&!braking&&!burnPlan.active&&!goTo.active){
-      _warpHover=pickWarpTarget(_mouseX,_mouseY,mpp);
-    } else { _warpHover=null; }
-    drawWarpHover();
-    drawVelocityArrow();drawRocket();drawCentrifugeEffect();drawChain(mpp);drawBeetleAnim(lastFrameDt);drawNavMarkers();
+    drawPrediction(mpp);drawVelocityArrow();drawRocket();drawCentrifugeEffect();drawChain(mpp);drawBeetleAnim(lastFrameDt);drawNavMarkers();
     drawPlanetIndicators();
 
     // Remove tilt before drawing HUD (stays flat on screen)
     removeTilt();
+
+    // Relativistic full-screen overlay: vignette + forward-cone blueshift glow.
+    // Kicks in once γ is meaningful (>1.05, i.e. v ≳ 0.3c).
+    {
+      const _v2=rkt.vx*rkt.vx+rkt.vy*rkt.vy;
+      const _beta2=Math.min(_v2/(C_LIGHT*C_LIGHT),0.9999999);
+      const _gamma=1/Math.sqrt(1-_beta2);
+      if(_gamma>1.05){
+        const t=Math.min(1,(_gamma-1.05)/4); // 0..1 over γ ∈ [1.05, 5.05]
+        // Forward-cone glow: bright spot in direction of motion (screen-space).
+        // World velocity (vx,vy) maps to screen direction (vx,-vy) (w2s flips Y).
+        const vMag=Math.sqrt(_v2);
+        const dirX=rkt.vx/vMag,dirY=-rkt.vy/vMag;
+        const fx=W/2+dirX*Math.min(W,H)*0.35;
+        const fy=H/2+dirY*Math.min(W,H)*0.35;
+        const grd=ctx.createRadialGradient(fx,fy,0,fx,fy,Math.max(W,H)*0.6);
+        grd.addColorStop(0,'rgba(180,210,255,'+(0.18*t).toFixed(3)+')');
+        grd.addColorStop(0.4,'rgba(120,160,230,'+(0.08*t).toFixed(3)+')');
+        grd.addColorStop(1,'rgba(0,0,0,0)');
+        ctx.save();ctx.globalCompositeOperation='screen';
+        ctx.fillStyle=grd;ctx.fillRect(0,0,W,H);
+        ctx.restore();
+        // Trailing redshift glow on the opposite side
+        const bx=W/2-dirX*Math.min(W,H)*0.35;
+        const by=H/2-dirY*Math.min(W,H)*0.35;
+        const grd2=ctx.createRadialGradient(bx,by,0,bx,by,Math.max(W,H)*0.55);
+        grd2.addColorStop(0,'rgba(140,40,30,'+(0.10*t).toFixed(3)+')');
+        grd2.addColorStop(0.5,'rgba(80,20,15,'+(0.05*t).toFixed(3)+')');
+        grd2.addColorStop(1,'rgba(0,0,0,0)');
+        ctx.save();ctx.globalCompositeOperation='multiply';
+        ctx.fillStyle=grd2;ctx.fillRect(0,0,W,H);
+        ctx.restore();
+        // Dark vignette to sell the "headlight effect" tunneling
+        const vig=ctx.createRadialGradient(W/2,H/2,Math.min(W,H)*0.3,W/2,H/2,Math.max(W,H)*0.75);
+        vig.addColorStop(0,'rgba(0,0,0,0)');
+        vig.addColorStop(1,'rgba(0,0,0,'+(0.45*t).toFixed(3)+')');
+        ctx.save();ctx.fillStyle=vig;ctx.fillRect(0,0,W,H);ctx.restore();
+      }
+    }
+
+    // === Lens overlay: vignette + luminance-masked film grain ===
+    // Applied to world rendering only — HUD draws on top of this layer.
+    // Vignette: subtle radial darkening at edges. Grain: per-pixel noise gated
+    // by approximate luminance so dark regions stay clean (real CCD photoelectron
+    // noise model — no light, no noise).
+    {
+      // 1) Vignette
+      const lvg=ctx.createRadialGradient(W/2,H/2,Math.min(W,H)*0.45,W/2,H/2,Math.max(W,H)*0.85);
+      lvg.addColorStop(0,'rgba(0,0,0,0)');
+      lvg.addColorStop(0.6,'rgba(0,0,0,0.12)');
+      lvg.addColorStop(1,'rgba(0,0,0,0.40)');
+      ctx.save();ctx.fillStyle=lvg;ctx.fillRect(0,0,W,H);ctx.restore();
+      // 2) Film grain — tiled procedural noise canvas, drawn with 'overlay' so
+      //    it modulates around mid-gray and stays invisible on pure black.
+      if(!window._grainCanvas){
+        const gc=document.createElement('canvas');gc.width=gc.height=128;
+        const gctx=gc.getContext('2d');
+        const id=gctx.createImageData(128,128);
+        for(let i=0;i<id.data.length;i+=4){
+          const n=(Math.random()+Math.random()-1)*40+128;  // gaussian-ish
+          id.data[i]=id.data[i+1]=id.data[i+2]=n;id.data[i+3]=255;
+        }
+        gctx.putImageData(id,0,0);
+        window._grainCanvas=gc;
+      }
+      ctx.save();
+      ctx.globalCompositeOperation='overlay';
+      ctx.globalAlpha=0.045;
+      const grainPat=ctx.createPattern(window._grainCanvas,'repeat');
+      // Animate by shifting the pattern origin each frame so grain doesn't freeze
+      const gShiftX=((performance.now()*0.013)%128)|0;
+      const gShiftY=((performance.now()*0.017)%128)|0;
+      ctx.translate(gShiftX,gShiftY);
+      ctx.fillStyle=grainPat;
+      ctx.fillRect(-gShiftX,-gShiftY,W,H);
+      ctx.restore();
+      // 3) Chromatic aberration near very bright bodies (Sun, Tau Ceti).
+      //    Cheap: just draw a red-offset and blue-offset thin arc near the limb.
+      for(const b of bodies){
+        if(b.name!=='Sun'&&b.name!=='Tau Ceti')continue;
+        const[cxb,cyb]=w2s(b.x,b.y),srb=b.radius/mpp;
+        if(srb<30||srb>800)continue;
+        const dxC=cxb-W/2,dyC=cyb-H/2;
+        const dL=Math.hypot(dxC,dyC)||1;
+        const off=Math.min(3,srb*0.015);
+        ctx.save();
+        ctx.globalCompositeOperation='screen';
+        ctx.globalAlpha=0.18;
+        // Red shift outward
+        ctx.strokeStyle='rgba(255,80,80,1)';ctx.lineWidth=1.5;
+        ctx.beginPath();ctx.arc(cxb+dxC/dL*off,cyb+dyC/dL*off,srb*1.02,0,Math.PI*2);ctx.stroke();
+        // Blue shift inward
+        ctx.strokeStyle='rgba(80,140,255,1)';ctx.lineWidth=1.5;
+        ctx.beginPath();ctx.arc(cxb-dxC/dL*off,cyb-dyC/dL*off,srb*1.02,0,Math.PI*2);ctx.stroke();
+        ctx.restore();
+      }
+    }
 
     drawHUD();
     drawScaleIndicator(mpp);
@@ -5382,31 +5070,9 @@ function drawCentrifugeEffect(){
   // No-op — centrifuge spin is applied directly to rkt.angle in stepPhysics
 }
 
-// Persistent notes panel. Shows up to 4 most-recent events with age-based fade.
-// Notes still expire via the existing notes[i].t countdown, but stay legible
-// long enough that the player doesn't miss SOI changes / mission events.
-function drawNotes(){
-  const max=4;
-  const visible=notes.slice(-max);
-  if(!visible.length)return;
-  const U=UI.U;
-  const fs=Math.round(13*U), lh=Math.round(20*U);
-  const panelW=Math.min(W*0.6,Math.round(420*U));
-  const px=W/2-panelW/2, py=Math.round(44*U);
-  for(let i=0;i<visible.length;i++){
-    const n=visible[i];
-    // Fade once t < 1, otherwise stay full-bright; min 0.35 so old notes are still readable.
-    const age=Math.max(0.35,Math.min(1,n.t));
-    const y=py+i*lh;
-    // Subtle dark plate behind text for legibility over bright bodies.
-    ctx.fillStyle='rgba(0,0,0,'+(0.45*age)+')';
-    ctx.fillRect(px,y-fs+2,panelW,lh-2);
-    ctx.font='500 '+fs+'px Exo 2,sans-serif';ctx.textAlign='center';
-    ctx.fillStyle='rgba(255,200,80,'+age+')';
-    ctx.fillText(n.txt,W/2,y);
-  }
-  ctx.textAlign='left';
-}
+function drawNotes(){for(let i=notes.length-1;i>=0;i--){const n=notes[i],alpha=Math.min(1,n.t);
+  ctx.fillStyle=`rgba(255,200,50,${alpha})`;ctx.font='13px Exo 2,sans-serif';ctx.textAlign='center';
+  ctx.fillText(n.txt,W/2,50+(notes.length-1-i)*22);}}
 
 // ═══════════════════════════════════════════
 // ═══════════════════════════════════════════
@@ -5600,11 +5266,8 @@ function drawBarMeter(x,y,w,h,value,max,color,label,valText){
 
 function drawHUD(){
   if(!hudOpen)return; // HUD collapsed — drawer is closed
-  // Responsive sizing — unified UI.U, driven by min(W,H) so portrait/ultrawide
-  // both behave instead of width-only scaling like before.
-  const hScale=UI.U;
-  const hudMode=getHUDMode();           // LAUNCH | ORBITAL | CRUISE | LANDING | RELATIVISTIC | MISSION
-  const crit=UI.criticality();          // 0..N escalation level
+  // Responsive sizing — scales with screen
+  const hScale=Math.max(0.85,Math.min(1.2,W/1400));
   const pw=Math.floor(310*hScale);
   // Dynamic panel height — estimate based on what sections are visible
   let phBase=360; // minimum: gauges + velocity + core readouts + orbit + distances + time
@@ -5624,10 +5287,6 @@ function drawHUD(){
   ctx.fillStyle='rgba(0,0,0,0.4)';ctx.fillRect(9,8+ph-1,pw-2,1);
   ctx.fillStyle='rgba(0,0,0,0.2)';ctx.fillRect(8+pw-1,9,1,ph-2); // right shadow
   ctx.strokeStyle='rgba(255,170,50,0.1)';ctx.lineWidth=1;ctx.strokeRect(8,8,pw,ph);
-  // Critical-state escalation: outer pulsing ring on the whole HUD when multiple
-  // criticals stack (heat critical + impact predicted, etc.). One critical = no
-  // panel ring (the inline section pulse covers it); two+ = panel-level alarm.
-  if(crit>=2)UI.pulseRect(8,8,pw,ph,'255,80,60',2);
   // Corner screws — 4 small circles with cross slots
   function drawScrew(sx,sy){
     const sg=ctx.createRadialGradient(sx-1,sy-1,0,sx,sy,4);
@@ -5682,8 +5341,6 @@ function drawHUD(){
     const heatColor=heatLevel>=HEAT_CRITICAL?'rgba(255,60,30,0.9)':heatLevel>=HEAT_WARN?'rgba(255,160,40,0.8)':'rgba(255,220,80,0.6)';
     drawBarMeter(lx,y+2,rw,8,heatLevel,1,heatColor,'HULL HEAT',
       heatLevel>=HEAT_CRITICAL?'CRITICAL':heatLevel>=HEAT_WARN?'WARNING':(heatLevel*100).toFixed(0)+'%');
-    // Escalation: pulsing red border on the heat bar when critical.
-    if(heatLevel>=HEAT_CRITICAL)UI.pulseRect(lx-2,y,rw+4,14,'255,80,40',1.5);
     y+=24;
   }
   sep();
@@ -5711,25 +5368,13 @@ function drawHUD(){
   ln('DELTA-V',isFinite(getDV())?fmtVel(getDV()):'---',isFinite(getDV())?(getDV()>100?'#bcd':'#f88'):'#445');
   sep();
 
-  // === Orbit section — context-aware visibility ===
-  // CRUISE: rocket is light-seconds from any planet, orbital elements meaningless.
-  // RELATIVISTIC: same logic, plus we want to surface γ instead.
-  // INTERSTELLAR: explicit suppression for Sun-bound escape at deep space.
+  // === Orbit section (hide when interstellar / meaningless escape) ===
   const orb=computeOrbital();
   const isEscape=orb.ecc>=1||!isFinite(orb.ap);
   const altFromDom=getAlt();
   ctx.font='600 9px Orbitron,sans-serif';ctx.fillStyle='rgba(255,170,50,0.5)';ctx.textAlign='left';
-  if(hudMode==='CRUISE'||hudMode==='RELATIVISTIC'){
-    ctx.fillText(hudMode==='RELATIVISTIC'?'RELATIVISTIC':'INTERSTELLAR CRUISE',lx,y);y+=16;
-    if(hudMode==='RELATIVISTIC'){
-      const v2=rkt.vx*rkt.vx+rkt.vy*rkt.vy, b2=Math.min(0.9999999,v2/(C_LIGHT*C_LIGHT));
-      const g=1/Math.sqrt(1-b2);
-      ln('GAMMA','γ '+g.toFixed(3),'#f84');
-      ln('BETA',(Math.sqrt(b2)*100).toFixed(2)+'% c','#f84');
-    }else{
-      ln('STATUS','Coast','#79b');
-    }
-  }else if(isEscape&&orb.dom==='Sun'&&altFromDom>AU*50){
+  if(isEscape&&orb.dom==='Sun'&&altFromDom>AU*50){
+    // Interstellar space — orbit info is meaningless
     ctx.fillText('INTERSTELLAR',lx,y);y+=16;
     ln('STATUS','Escape trajectory','#ff8');
   }else{
@@ -5739,26 +5384,13 @@ function drawHUD(){
     ln('PE',fmtDist(orb.pe),orb.pe<0?'#f44':'#bcd');
     if(!isEscape){ln('PERIOD',fmtTime(orb.period));}
     ln('ECC',orb.ecc<10?orb.ecc.toFixed(4):'Escape',orb.ecc<1?'#bcd':'#ff8');
-    // Escalation: impact predicted (PE below planet radius and descending).
-    if(orb.pe<0&&getVSpeed()<0){
-      ctx.font='600 10px Orbitron,sans-serif';ctx.fillStyle=UI.C.CRIT;
-      ctx.fillText('IMPACT PREDICTED',lx,y);y+=14;
-    }
   }
   sep();
 
-  // === Distances === — Earth/Moon hidden during interstellar cruise (meaningless when
-  // 12 light-years away); SUN distance is always useful as a "how far have I gotten".
-  if(hudMode!=='CRUISE'&&hudMode!=='RELATIVISTIC'){
-    if(earth)ln('EARTH',fmtDist(Math.hypot(rkt.x-earth.x,rkt.y-earth.y)-R_E),UI.C.INFO);
-    if(moon)ln('MOON',fmtDist(Math.hypot(rkt.x-moon.x,rkt.y-moon.y)-R_M),UI.C.INFO);
-  }
-  // Target distance for cam target if it's a body — useful regardless of mode.
-  const tgtBody=bodies.find(b=>b.name===cam.target);
-  if(tgtBody&&cam.target!=='Sun'&&cam.target!=='rocket'){
-    ln('→ '+cam.target.toUpperCase(),fmtDist(Math.hypot(rkt.x-tgtBody.x,rkt.y-tgtBody.y)-tgtBody.radius),UI.C.INFO);
-  }
-  ln('SUN',fmtDist(Math.hypot(rkt.x,rkt.y)),UI.C.INFO);
+  // === Distances ===
+  if(earth)ln('EARTH',fmtDist(Math.hypot(rkt.x-earth.x,rkt.y-earth.y)-R_E),'#79b');
+  if(moon)ln('MOON',fmtDist(Math.hypot(rkt.x-moon.x,rkt.y-moon.y)-R_M),'#79b');
+  ln('SUN',fmtDist(Math.hypot(rkt.x,rkt.y)),'#79b');
 
   // === Chain section ===
   if(chain.status!=='stowed'){
@@ -5799,12 +5431,12 @@ function drawHUD(){
   }
   sep();
 
-  // === Status bar === — color-coded with semantic tokens for instant recognition.
+  // === Status bar ===
   if(braking){
-    ctx.font='500 11px Exo 2,sans-serif';ctx.fillStyle=UI.C.CRIT;
+    ctx.font='500 11px Exo 2,sans-serif';ctx.fillStyle='#f44';
     ctx.fillText('BRAKING — '+getSpeed().toFixed(0)+' m/s',lx,y);y+=16;
   }else{
-    const hlCol=headingLock==='off'?UI.C.LABEL:headingLock==='prograde'?UI.C.GOOD:headingLock==='retrograde'?UI.C.CRIT:UI.C.INFO;
+    const hlCol=headingLock==='off'?'#556':headingLock==='prograde'?'#0c0':headingLock==='retrograde'?'#c44':'#4af';
     ctx.font='500 11px Exo 2,sans-serif';ctx.fillStyle=hlCol;
     ctx.fillText('HDG: '+(headingLock==='off'?'Manual':headingLock==='target'?headingTarget:headingLock),lx,y);y+=16;
   }
@@ -5815,76 +5447,78 @@ function drawHUD(){
   const lcdX=lx-2,lcdW=rw+4,lcdH=52;
   ctx.fillStyle='rgba(0,2,5,0.6)';ctx.fillRect(lcdX,y,lcdW,lcdH);
   ctx.strokeStyle='rgba(0,0,0,0.4)';ctx.lineWidth=1.5;ctx.strokeRect(lcdX,y,lcdW,lcdH);
-  ctx.fillStyle='rgba(255,255,255,0.02)';ctx.fillRect(lcdX+1,y+lcdH-1,lcdW-2,1);
-  // Warp indicator — compact segmented bar (never truncates, fits any level count).
-  // Each segment = one TW tier; current tier glows, locked tiers dim, max-allowed
-  // shown as a thin overlay cap so player sees ceiling.
+  ctx.fillStyle='rgba(255,255,255,0.02)';ctx.fillRect(lcdX+1,y+lcdH-1,lcdW-2,1); // bottom highlight
+  // Warp indicator — skeuomorphic arrow row
   ctx.font='600 7px Orbitron,sans-serif';ctx.textAlign='left';
-  ctx.fillStyle=tw>1?'rgba(255,255,80,0.55)':UI.C.MUTED;ctx.fillText('WARP',lcdX+6,y+11);
-  const wBarX=lcdX+42, wBarY=y+5, wBarW=Math.min(140,lcdW-90), wBarH=10;
-  const segs=TW_LEVELS.length;
-  const segW=wBarW/segs;
-  const maxAllowed=(typeof maxTWIdx==='function')?maxTWIdx():segs-1;
-  for(let ai=0;ai<segs;ai++){
-    const sx=wBarX+ai*segW;
+  ctx.fillStyle=tw>1?'rgba(255,255,80,0.5)':'#334';ctx.fillText('WARP',lcdX+6,y+11);
+  // Draw arrow row — one arrow per TW level, lights up progressively
+  const arrowStartX=lcdX+42,arrowY=y+7,arrowW=9,arrowH=8,arrowGap=2;
+  const maxArrows=TW_LEVELS.length;
+  for(let ai=0;ai<maxArrows;ai++){
+    const ax=arrowStartX+ai*(arrowW+arrowGap);
+    if(ax+arrowW>lcdX+lcdW-40)break; // don't overflow into date area
     const isLit=ai<twIdx;
     const isCurrent=ai===twIdx-1;
-    const beyondMax=ai>maxAllowed;
+    // Arrow shape (right-pointing chevron)
+    ctx.beginPath();
+    ctx.moveTo(ax,arrowY);
+    ctx.lineTo(ax+arrowW-2,arrowY+arrowH/2);
+    ctx.lineTo(ax,arrowY+arrowH);
+    ctx.closePath();
     if(isLit){
-      const heat=Math.min(1,ai/(segs-1));
-      const r=255, g=Math.floor(255-heat*175), b=Math.floor(80-heat*80);
-      const glow=isCurrent?0.95:0.55+ai*0.03;
-      ctx.fillStyle='rgba('+r+','+g+','+b+','+glow+')';
-      ctx.fillRect(sx+0.5,wBarY,segW-1,wBarH);
+      // Lit arrow — brighter the higher the level
+      const heat=Math.min(1,ai/8); // 0=cool yellow, 1=hot orange-red
+      const r=Math.floor(255);
+      const g=Math.floor(255-heat*155);
+      const b=Math.floor(80-heat*80);
+      const glow=isCurrent?0.95:0.6+ai*0.03;
+      ctx.fillStyle=`rgba(${r},${g},${b},${glow})`;
+      ctx.fill();
+      // Glow on current arrow
       if(isCurrent){
-        ctx.shadowColor='rgba('+r+','+g+','+b+',0.7)';
-        ctx.shadowBlur=5;ctx.fillRect(sx+0.5,wBarY,segW-1,wBarH);ctx.shadowBlur=0;
+        ctx.shadowColor=`rgba(${r},${g},${b},0.6)`;
+        ctx.shadowBlur=6;ctx.fill();ctx.shadowBlur=0;
       }
     }else{
-      ctx.fillStyle=beyondMax?'rgba(80,30,30,0.4)':'rgba(40,42,50,0.55)';
-      ctx.fillRect(sx+0.5,wBarY,segW-1,wBarH);
+      // Grayed out arrow
+      ctx.fillStyle='rgba(40,42,50,0.5)';ctx.fill();
+      ctx.strokeStyle='rgba(255,255,255,0.06)';ctx.lineWidth=0.5;ctx.stroke();
     }
   }
-  // Max-allowed ceiling tick
-  if(maxAllowed<segs-1){
-    const capX=wBarX+(maxAllowed+1)*segW;
-    ctx.fillStyle='rgba(255,80,80,0.6)';ctx.fillRect(capX-1,wBarY-1,1,wBarH+2);
+  // Warp multiplier text next to arrows
+  if(tw>1){
+    ctx.font='600 7px Orbitron,sans-serif';ctx.textAlign='left';
+    ctx.fillStyle='#ff4';
+    const labelX=arrowStartX+Math.min(maxArrows,twIdx)*(arrowW+arrowGap)+4;
+    if(labelX<lcdX+lcdW-40)ctx.fillText(tw+'x',labelX,y+12);
   }
-  // Numeric multiplier label, immediately right of the bar
-  ctx.font='600 9px Orbitron,sans-serif';ctx.textAlign='left';
-  ctx.fillStyle=tw>1?'#ff4':UI.C.MUTED;
-  const twLabel=tw>=1e6?(tw/1e6).toFixed(0)+'M×':tw>=1000?(tw/1000).toFixed(0)+'k×':tw+'×';
-  ctx.fillText(twLabel,wBarX+wBarW+6,y+13);
-  // Date at far right of WARP row
-  const curDate=new Date(missionDate.getTime()+simTime*1000);
-  ctx.font='500 9px Exo 2,sans-serif';ctx.textAlign='right';ctx.fillStyle=UI.C.LABEL;
-  ctx.fillText(curDate.toISOString().split('T')[0],lcdX+lcdW-6,y+13);
-  ctx.textAlign='left';
   // Earth time — seven-segment font, large
   ctx.font="18px 'DSEG7 Classic',Exo 2,sans-serif";ctx.textAlign='left';
-  ctx.fillStyle='rgba(50,200,120,0.12)';
+  ctx.fillStyle='rgba(50,200,120,0.12)'; // ghost segments (all 8s)
   ctx.fillText('8888:88:88',lcdX+6,y+34);
   ctx.fillStyle='#3c8';
   ctx.fillText(fmtMTime(simTime).replace(/\d+d /,''),lcdX+6,y+34);
-  // Day counter — right side of the main time row
+  // Day counter
   const days=Math.floor(simTime/86400);
-  if(days>0){
-    ctx.font='600 11px Orbitron,sans-serif';ctx.textAlign='right';ctx.fillStyle='#2a6';
-    ctx.fillText(days+'d',lcdX+lcdW-6,y+34);ctx.textAlign='left';
-  }
-  // Ship time — collapsed to a single inline row, only shown when dilation is meaningful.
+  if(days>0){ctx.font='500 10px Exo 2,sans-serif';ctx.fillStyle='#2a6';ctx.fillText(days+'d',lcdX+rw-30,y+12);}
+  // Ship time — smaller seven-segment, right side
   const dilation=simTime>0?(shipTime/simTime):1;
+  ctx.font="600 8px Orbitron,sans-serif";ctx.textAlign='left';
+  ctx.fillStyle=dilation<0.99?'rgba(255,140,60,0.6)':'#334';
+  ctx.fillText('SHIP',lcdX+6,y+48);
+  ctx.font="13px 'DSEG7 Classic',Exo 2,sans-serif";ctx.textAlign='right';
+  ctx.fillStyle='rgba(200,100,40,0.08)';ctx.fillText('8888:88:88',lcdX+lcdW-6,y+48);
+  ctx.fillStyle=dilation<0.99?'#f84':'#667';
+  ctx.fillText(fmtMTime(shipTime).replace(/\d+d /,''),lcdX+lcdW-6,y+48);
   if(dilation<0.99){
-    ctx.font="600 8px Orbitron,sans-serif";ctx.textAlign='left';
-    ctx.fillStyle='rgba(255,140,60,0.7)';
-    ctx.fillText('SHIP',lcdX+6,y+48);
-    ctx.font="12px 'DSEG7 Classic',Exo 2,sans-serif";
-    ctx.fillStyle='#f84';
-    ctx.fillText(fmtMTime(shipTime).replace(/\d+d /,''),lcdX+34,y+48);
-    ctx.font='500 9px Exo 2,sans-serif';ctx.textAlign='right';ctx.fillStyle='#a64';
-    ctx.fillText('γ '+(1/dilation).toFixed(3),lcdX+lcdW-6,y+48);
-    ctx.textAlign='left';
+    ctx.font='500 9px Exo 2,sans-serif';ctx.fillStyle='#a64';
+    ctx.fillText(dilation.toFixed(3)+'x',lcdX+60,y+48);
   }
+  // Date
+  const curDate=new Date(missionDate.getTime()+simTime*1000);
+  ctx.font='500 9px Exo 2,sans-serif';ctx.textAlign='right';ctx.fillStyle='#556';
+  ctx.fillText(curDate.toISOString().split('T')[0],lcdX+lcdW-6,y+12);
+  ctx.textAlign='left';
   y+=lcdH+6;
 
   // === TIPS PANEL (between HUD and controls, using shared Y) ===
@@ -6018,7 +5652,7 @@ function initBodies(JD){
   if(voyager1)bodies.push(voyager1);
   // Tau Ceti system — drifts at 37.2 km/s (proper motion)
   bodies.push({name:'Tau Ceti',x:TAU_CETI.x,y:TAU_CETI.y,vx:TAU_CETI.vx,vy:TAU_CETI.vy,
-    mu:TAU_CETI.mu,radius:TAU_CETI.radius,soi:5e13,color:TAU_CETI.color,color2:TAU_CETI.color2});
+    mu:TAU_CETI.mu,radius:TAU_CETI.radius,soi:TAU_CETI_SOI,color:TAU_CETI.color,color2:TAU_CETI.color2});
   // Tau Ceti planets orbit Tau Ceti
   for(const tp of TAU_CETI.planets){
     const ang=(JD-2451545)*2*Math.PI/(tp.period/86400)%( 2*Math.PI);
@@ -6027,9 +5661,6 @@ function initBodies(JD){
       // Tau Ceti e: 3.93x Earth mass → mu=3.93×3.986e14=1.567e15
       color:tp.color,color2:tp.color,taumoeba:tp.taumoeba||false});
   }
-  // Cache hot-path body references — see comment near _tauCetiE declaration.
-  _tauCetiE   = bodies.find(b=>b.name==='Tau Ceti e')||null;
-  _tauCetiStar= bodies.find(b=>b.name==='Tau Ceti')||null;
 }
 
 async function launch(){
@@ -6044,8 +5675,8 @@ async function launch(){
 
   // Fetch NASA JPL Horizons ephemeris (DE441, sub-km accuracy)
   const launchBtn=document.getElementById('launch-btn');
-  launchBtn.textContent='LOADING NASA EPHEMERIS...';launchBtn.style.pointerEvents='none';
-  const horizonsOk=await initHorizonsCache(jdStart);
+  launchBtn.textContent=COMPACT_SOLAR_SYSTEM?'LOADING COMPACT EPHEMERIS...':'LOADING NASA EPHEMERIS...';launchBtn.style.pointerEvents='none';
+  const horizonsOk=COMPACT_SOLAR_SYSTEM?false:await initHorizonsCache(jdStart);
   launchBtn.textContent='BEGIN MISSION';launchBtn.style.pointerEvents='';
 
   initBodies(jdStart);
@@ -6137,9 +5768,9 @@ async function launch(){
     // Arrival at Tau Ceti — approaching the star from interstellar space
     const tc=bodies.find(b=>b.name==='Tau Ceti');
     if(tc){
-      // Spawn 2 AU away from Tau Ceti, heading toward it at 0.5% c
+      // Spawn just outside the compressed Tau Ceti planetary system.
       const approachAng=Math.atan2(tc.y,tc.x)+Math.PI; // from Sol direction
-      const spawnDist=2*AU;
+      const spawnDist=(COMPACT_SOLAR_SYSTEM?0.35:2)*AU;
       rkt.x=tc.x+spawnDist*Math.cos(approachAng);
       rkt.y=tc.y+spawnDist*Math.sin(approachAng);
       const approachSpd=C_LIGHT*0.005; // 0.5% c — need to brake!
@@ -6167,7 +5798,8 @@ async function launch(){
   }
 
   // Ephemeris status note
-  if(horizonsCache.loaded)addNote('NASA JPL Horizons ephemeris active (DE441)');
+  if(COMPACT_SOLAR_SYSTEM)addNote('COMPACT SYSTEM: planets are packed close; terminators preserved; stellar heat disabled.');
+  else if(horizonsCache.loaded)addNote('NASA JPL Horizons ephemeris active (DE441)');
   else addNote('Offline mode — using approximate Keplerian ephemeris');
 
   // Dual fuel pool init
@@ -6253,6 +5885,7 @@ function restart(){phase='setup';paused=false;artemis2Mode=false;
 // ═══════════════════════════════════════════
 // QUICKSAVE / LOAD (localStorage)
 // ═══════════════════════════════════════════
+const QUICK_SAVE_KEY=COMPACT_SOLAR_SYSTEM?'phm_compact_advanced_quicksave':'phm_quicksave';
 function quickSave(){
   const state={
     rkt:{x:rkt.x,y:rkt.y,vx:rkt.vx,vy:rkt.vy,angle:rkt.angle,throttle:rkt.throttle,fuel:rkt.fuel},
@@ -6266,12 +5899,12 @@ function quickSave(){
     fcEnabled,
     savedAt:Date.now()
   };
-  try{localStorage.setItem('phm_quicksave',JSON.stringify(state));addNote('QUICKSAVED');}
+  try{localStorage.setItem(QUICK_SAVE_KEY,JSON.stringify(state));addNote('QUICKSAVED');}
   catch(e){addNote('Save failed: '+e.message);}
 }
 function quickLoad(){
   try{
-    const raw=localStorage.getItem('phm_quicksave');
+    const raw=localStorage.getItem(QUICK_SAVE_KEY);
     if(!raw){addNote('No quicksave found');return;}
     const s=JSON.parse(raw);
     // Restore config
@@ -6388,630 +6021,194 @@ function gameLoop(ts){
     }
     const tw=TW_LEVELS[twIdx],simDur=frameDt*tw;
     const altNear=Math.min(getAltE(),getAltM());
-    // Substep size by proximity tier. Deep-space tiers are MUCH bigger than
-    // before: gravity changes slowly when nothing massive is nearby, so RK4
-    // is stable at 1000-10000s steps in interstellar cruise. Old code capped
-    // at 100s even at 12 light-years, wasting thousands of substeps per frame.
-    let pdt;
-    if(altNear<1e3)        pdt=0.005;
-    else if(altNear<1e4)   pdt=0.02;
-    else if(altNear<1e5)   pdt=0.1;
-    else if(altNear<1e6)   pdt=1;
-    else if(altNear<1e8)   pdt=10;
-    else if(altNear<1e10)  pdt=100;
-    else if(altNear<1e12)  pdt=1000;     // beyond all planet SOIs
-    else                   pdt=10000;    // interstellar — gravity is essentially constant
-    // Relativistic γ correction needs tight steps regardless of position.
+    let pdt=altNear<1e3?.005:altNear<1e4?.02:altNear<1e5?.1:altNear<1e6?1:altNear<1e8?10:100;
+    // At relativistic speeds, limit timestep so RK4 can track the γ correction
     const rktSpd2=rkt.vx*rkt.vx+rkt.vy*rkt.vy;
-    if(rktSpd2>C_LIGHT*C_LIGHT*0.01)pdt=Math.min(pdt,10);
-    if(rktSpd2>C_LIGHT*C_LIGHT*0.25)pdt=Math.min(pdt,2);
-    if(rktSpd2>C_LIGHT*C_LIGHT*0.81)pdt=Math.min(pdt,0.5);
-    // Cap pdt so the dominant body cannot move more than ~5% of the
-    // rocket-to-body distance per substep (gravity vector rotation ≤ ~3°).
-    for(const b of bodies){
-      if(!b||!b.mu)continue;
-      const dx=rkt.x-b.x,dy=rkt.y-b.y,r=Math.hypot(dx,dy);
-      if(r<10)continue;
-      const vb=Math.hypot(b.vx||0,b.vy||0);
-      if(vb<1)continue;
-      const cap=0.05*r/vb;
-      if(cap<pdt)pdt=cap;
-    }
-    if(pdt<0.001)pdt=0.001;
-    // Step count cap — drives the realtime budget. 1.5e4 keeps a frame under
-    // ~25 ms of physics on a modern laptop with the zero-alloc RK4. The
-    // previous 5e4 was both unnecessary and an FPS killer at extreme warp.
-    let steps=Math.max(1,Math.ceil(simDur/pdt));
-    if(steps>1.5e4)steps=1.5e4;
-    pdt=simDur/steps;
-    // Realtime-budget warp control: if the previous frame's physics blew the
-    // budget, drop one warp tier temporarily so the game stays responsive.
-    // Restores automatically when the budget recovers. Standard pattern in
-    // KSP / SimpleRockets for adaptive time-warp.
-    const physBudget=33; // ms — keeps headroom for render at 60fps
-    if(_lastPhysMs>physBudget*2 && twIdx>0){twIdx--; addNote('Warp auto-lowered to keep frame rate');}
-    const _physStart=performance.now();
+    if(rktSpd2>C_LIGHT*C_LIGHT*0.01)pdt=Math.min(pdt,10);  // >10% c: max 10s steps
+    if(rktSpd2>C_LIGHT*C_LIGHT*0.25)pdt=Math.min(pdt,2);   // >50% c: max 2s steps
+    if(rktSpd2>C_LIGHT*C_LIGHT*0.81)pdt=Math.min(pdt,0.5); // >90% c: max 0.5s steps
+    let steps=Math.max(1,Math.ceil(simDur/pdt));if(steps>5e4)steps=5e4;pdt=simDur/steps;
     for(let i=0;i<steps;i++){stepPhysics(pdt);if(phase!=='flying')break;}
-    _lastPhysMs=performance.now()-_physStart;
     updatePrediction(); // analytical — cheap enough for every frame
     logTick();
     for(let i=notes.length-1;i>=0;i--){notes[i].t-=frameDt;if(notes[i].t<=0)notes.splice(i,1);}
   }
-  lastFrameDt=frameDt;processInput(frameDt);updateCamera(frameDt);
-  // Advance UI pulse (~0.6 Hz, used by critical escalation glow + blink).
-  UI.pulse=(UI.pulse+frameDt*0.6)%1;
-  render();AUDIO.tick();
+  lastFrameDt=frameDt;processInput(frameDt);updateCamera(frameDt);render();AUDIO.tick();
   requestAnimationFrame(gameLoop);}
 
 // ═══════════════════════════════════════════
 // INIT
 // ═══════════════════════════════════════════
-function resize(){
-  const dpr=Math.min(window.devicePixelRatio||1,2);
-  UI.dpr=dpr;
-  W=window.innerWidth;H=window.innerHeight;
-  canvas.width=W*dpr;canvas.height=H*dpr;
-  canvas.style.width=W+'px';canvas.style.height=H+'px';
-  ctx.setTransform(dpr,0,0,dpr,0,0);
-  // One unit of UI sizing. Driven by the smaller axis so portrait + ultrawide both behave.
-  UI.U=Math.max(0.7,Math.min(1.4,Math.min(W,H)/900));
-}
+function resize(){W=canvas.width=window.innerWidth;H=canvas.height=window.innerHeight;}
 window.addEventListener('resize',resize);resize();
 initTextures();generateStars();generateMilkyWay();initSetup();
 requestAnimationFrame(gameLoop);
 
 // ═══════════════════════════════════════════
-// MOBILE TOUCH CONTROLS v3 — icon-driven, slider-based
-//
-// Best-practice patterns adopted from leading mobile space sims (Spaceflight
-// Simulator, SimpleRockets 2) and the Apple HIG / Material guidelines:
-//
-//  - Bottom-corner thumb zones reserved for the two controls used every second:
-//    rotation pad (left) and throttle slider (right). Hands rest naturally on
-//    those areas in both landscape and portrait orientations.
-//  - Icons carry function recognition; small text labels confirm meaning.
-//    Pictograms drawn as canvas paths so we ship no extra assets.
-//  - Throttle is a continuous vertical slider, not discrete + / - buttons.
-//    Direct drag = instant precise control. Caps at top/bottom give MAX/CUT.
-//  - Top toolbar holds infrequent, contextual actions in small icon buttons.
-//  - Less-used actions live in a "menu drawer" reached by a single tap.
-//  - Touches tracked by identifier; button-hold, slider-drag, world-pan,
-//    and pinch-zoom never cross-fire.
-//  - All sizes scale with UI.U (the same unit used by HUD), so portrait
-//    iPhones and landscape tablets both get correctly sized targets.
-//  - Tap targets honor the 44pt minimum.
+// MOBILE TOUCH CONTROLS + HUD DRAWER
+// Detects touch OR small screen. Touch buttons + collapsible HUD.
 // ═══════════════════════════════════════════
-let mobileActive=false;
+let mobileActive=false; // ONLY set true by actual touch event
 let hudOpen=true;
-let mobileDrawerOpen=false;
 let _mobileButtons=[];
-let _mobileDrawerButtons=[];
-const _touches=new Map();
-let _pinchLastDist=0;
-let _throttleSliderRect=null;   // {x,y,w,h} of the current slider geometry
 
 function checkMobile(){return mobileActive;}
+// Activate ONLY on real touch — not screen size, not maxTouchPoints, not iframe detection
+window.addEventListener('touchstart',function once(){mobileActive=true;hudOpen=false;window.removeEventListener('touchstart',once);},{once:true});
 
-function _detectMobile(){
-  const coarse=window.matchMedia&&window.matchMedia('(pointer: coarse)').matches;
-  if(coarse&&Math.min(window.innerWidth,window.innerHeight)<950){
-    mobileActive=true;hudOpen=false;
-  }
-}
-_detectMobile();
-window.addEventListener('touchstart',function once(){
-  mobileActive=true;hudOpen=false;
-  window.removeEventListener('touchstart',once);
-},{once:true});
-
-// ───────────────────────────────────────────
-// ICON LIBRARY
-// Each function paints a recognizable pictogram inside a circle of radius r
-// centered at (cx,cy), colored with the given css color. Keep them minimal
-// and high-contrast so they read at any size.
-// ───────────────────────────────────────────
-const ICONS={
-  rotL(ctx,cx,cy,r,color){
-    ctx.save();
-    ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineCap='round';
-    ctx.lineWidth=Math.max(2,r*0.18);
-    ctx.beginPath();ctx.arc(cx,cy,r*0.55,Math.PI*0.25,Math.PI*1.75,true);ctx.stroke();
-    // arrowhead at the tail (top-right side of the arc)
-    const ang=Math.PI*0.25;
-    const ax=cx+Math.cos(ang)*r*0.55, ay=cy+Math.sin(ang)*r*0.55;
-    ctx.beginPath();
-    ctx.moveTo(ax,ay);
-    ctx.lineTo(ax+r*0.28,ay-r*0.05);
-    ctx.lineTo(ax+r*0.05,ay+r*0.28);
-    ctx.closePath();ctx.fill();
-    ctx.restore();
-  },
-  rotR(ctx,cx,cy,r,color){
-    ctx.save();
-    ctx.translate(cx,cy);ctx.scale(-1,1);
-    ICONS.rotL(ctx,0,0,r,color);
-    ctx.restore();
-  },
-  warpBack(ctx,cx,cy,r,color){
-    ctx.save();
-    ctx.fillStyle=color;
-    const s=r*0.55;
-    for(let i=0;i<2;i++){
-      const ox=cx-s*0.35+i*s*0.7;
-      ctx.beginPath();
-      ctx.moveTo(ox+s*0.45,cy-s*0.55);
-      ctx.lineTo(ox-s*0.35,cy);
-      ctx.lineTo(ox+s*0.45,cy+s*0.55);
-      ctx.closePath();ctx.fill();
-    }
-    ctx.restore();
-  },
-  warpFwd(ctx,cx,cy,r,color){
-    ctx.save();
-    ctx.translate(cx,cy);ctx.scale(-1,1);
-    ICONS.warpBack(ctx,0,0,r,color);
-    ctx.restore();
-  },
-  pause(ctx,cx,cy,r,color){
-    ctx.save();
-    ctx.fillStyle=color;
-    const w=r*0.28,h=r*1.0,gap=r*0.22;
-    ctx.fillRect(cx-gap-w,cy-h/2,w,h);
-    ctx.fillRect(cx+gap,  cy-h/2,w,h);
-    ctx.restore();
-  },
-  camera(ctx,cx,cy,r,color){
-    ctx.save();
-    ctx.strokeStyle=color;ctx.fillStyle=color;
-    ctx.lineWidth=Math.max(2,r*0.13);ctx.lineJoin='round';
-    // body
-    ctx.beginPath();
-    ctx.moveTo(cx-r*0.7,cy-r*0.35);
-    ctx.lineTo(cx-r*0.45,cy-r*0.35);
-    ctx.lineTo(cx-r*0.35,cy-r*0.6);
-    ctx.lineTo(cx+r*0.35,cy-r*0.6);
-    ctx.lineTo(cx+r*0.45,cy-r*0.35);
-    ctx.lineTo(cx+r*0.7,cy-r*0.35);
-    ctx.lineTo(cx+r*0.7,cy+r*0.5);
-    ctx.lineTo(cx-r*0.7,cy+r*0.5);
-    ctx.closePath();ctx.stroke();
-    // lens
-    ctx.beginPath();ctx.arc(cx,cy+r*0.05,r*0.3,0,Math.PI*2);ctx.stroke();
-    ctx.beginPath();ctx.arc(cx,cy+r*0.05,r*0.12,0,Math.PI*2);ctx.fill();
-    ctx.restore();
-  },
-  menu(ctx,cx,cy,r,color){
-    ctx.save();
-    ctx.strokeStyle=color;ctx.lineCap='round';
-    ctx.lineWidth=Math.max(3,r*0.18);
-    const w=r*1.05;
-    for(let i=-1;i<=1;i++){
-      const y=cy+i*r*0.42;
-      ctx.beginPath();ctx.moveTo(cx-w/2,y);ctx.lineTo(cx+w/2,y);ctx.stroke();
-    }
-    ctx.restore();
-  },
-  hudL(ctx,cx,cy,r,color){
-    ctx.save();
-    ctx.strokeStyle=color;ctx.fillStyle=color;
-    ctx.lineWidth=Math.max(2,r*0.13);
-    // panel rectangle
-    ctx.beginPath();ctx.rect(cx-r*0.7,cy-r*0.7,r*0.7,r*1.4);ctx.stroke();
-    // chevron
-    ctx.beginPath();
-    ctx.moveTo(cx+r*0.55,cy-r*0.4);
-    ctx.lineTo(cx+r*0.1, cy);
-    ctx.lineTo(cx+r*0.55,cy+r*0.4);
-    ctx.lineWidth=Math.max(3,r*0.16);ctx.stroke();
-    ctx.restore();
-  },
-  hudR(ctx,cx,cy,r,color){
-    ctx.save();
-    ctx.translate(cx,cy);ctx.scale(-1,1);
-    ICONS.hudL(ctx,0,0,r,color);
-    ctx.restore();
-  },
-  brake(ctx,cx,cy,r,color){
-    ctx.save();
-    // STOP sign octagon
-    ctx.strokeStyle=color;ctx.fillStyle=color;
-    ctx.lineWidth=Math.max(2,r*0.13);
-    const a=Math.PI/8,R=r*0.85;
-    ctx.beginPath();
-    for(let i=0;i<8;i++){
-      const ang=a+i*Math.PI/4;
-      const x=cx+Math.cos(ang)*R, y=cy+Math.sin(ang)*R;
-      if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
-    }
-    ctx.closePath();ctx.stroke();
-    // inner "!" bar
-    ctx.fillRect(cx-r*0.08,cy-r*0.4,r*0.16,r*0.55);
-    ctx.beginPath();ctx.arc(cx,cy+r*0.35,r*0.1,0,Math.PI*2);ctx.fill();
-    ctx.restore();
-  },
-  lock(ctx,cx,cy,r,color){
-    // Heading-lock target reticle
-    ctx.save();
-    ctx.strokeStyle=color;ctx.lineWidth=Math.max(2,r*0.13);ctx.lineCap='round';
-    ctx.beginPath();ctx.arc(cx,cy,r*0.5,0,Math.PI*2);ctx.stroke();
-    ctx.beginPath();ctx.arc(cx,cy,r*0.12,0,Math.PI*2);ctx.fillStyle=color;ctx.fill();
-    // crosshair ticks
-    for(let i=0;i<4;i++){
-      const a=i*Math.PI/2;
-      const x1=cx+Math.cos(a)*r*0.6, y1=cy+Math.sin(a)*r*0.6;
-      const x2=cx+Math.cos(a)*r*0.85, y2=cy+Math.sin(a)*r*0.85;
-      ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
-    }
-    ctx.restore();
-  },
-  map(ctx,cx,cy,r,color){
-    ctx.save();
-    ctx.strokeStyle=color;ctx.lineWidth=Math.max(2,r*0.13);
-    ctx.beginPath();ctx.arc(cx,cy,r*0.7,0,Math.PI*2);ctx.stroke();
-    // meridians + equator
-    ctx.beginPath();ctx.moveTo(cx-r*0.7,cy);ctx.lineTo(cx+r*0.7,cy);ctx.stroke();
-    ctx.beginPath();ctx.ellipse(cx,cy,r*0.35,r*0.7,0,0,Math.PI*2);ctx.stroke();
-    ctx.beginPath();ctx.ellipse(cx,cy,r*0.7,r*0.35,0,0,Math.PI*2);ctx.stroke();
-    ctx.restore();
-  },
-  grid(ctx,cx,cy,r,color){
-    ctx.save();
-    ctx.strokeStyle=color;ctx.lineWidth=Math.max(2,r*0.13);
-    for(let i=-1;i<=1;i+=2){
-      ctx.beginPath();ctx.moveTo(cx+i*r*0.3,cy-r*0.7);ctx.lineTo(cx+i*r*0.3,cy+r*0.7);ctx.stroke();
-      ctx.beginPath();ctx.moveTo(cx-r*0.7,cy+i*r*0.3);ctx.lineTo(cx+r*0.7,cy+i*r*0.3);ctx.stroke();
-    }
-    ctx.restore();
-  },
-  chain(ctx,cx,cy,r,color){
-    ctx.save();
-    ctx.strokeStyle=color;ctx.lineWidth=Math.max(2,r*0.15);
-    ctx.beginPath();ctx.ellipse(cx-r*0.3,cy,r*0.32,r*0.5,Math.PI/4,0,Math.PI*2);ctx.stroke();
-    ctx.beginPath();ctx.ellipse(cx+r*0.3,cy,r*0.32,r*0.5,Math.PI/4,0,Math.PI*2);ctx.stroke();
-    ctx.restore();
-  },
-  spin(ctx,cx,cy,r,color){
-    ctx.save();
-    ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineCap='round';
-    ctx.lineWidth=Math.max(2,r*0.16);
-    ctx.beginPath();ctx.arc(cx,cy,r*0.55,-Math.PI*0.25,Math.PI*1.25,false);ctx.stroke();
-    // tail arrow
-    const ang=Math.PI*1.25;
-    const ax=cx+Math.cos(ang)*r*0.55, ay=cy+Math.sin(ang)*r*0.55;
-    ctx.beginPath();
-    ctx.moveTo(ax,ay);ctx.lineTo(ax-r*0.05,ay-r*0.28);ctx.lineTo(ax-r*0.28,ay-r*0.05);
-    ctx.closePath();ctx.fill();
-    ctx.restore();
-  },
-  send(ctx,cx,cy,r,color){
-    // paper plane
-    ctx.save();
-    ctx.fillStyle=color;ctx.strokeStyle=color;ctx.lineWidth=Math.max(2,r*0.1);
-    ctx.beginPath();
-    ctx.moveTo(cx-r*0.7,cy+r*0.5);
-    ctx.lineTo(cx+r*0.75,cy-r*0.6);
-    ctx.lineTo(cx-r*0.1,cy+r*0.05);
-    ctx.closePath();ctx.fill();
-    ctx.beginPath();
-    ctx.moveTo(cx-r*0.1,cy+r*0.05);
-    ctx.lineTo(cx-r*0.7,cy+r*0.5);
-    ctx.lineTo(cx-r*0.1,cy+r*0.5);
-    ctx.closePath();ctx.fill();
-    ctx.restore();
-  },
-  save(ctx,cx,cy,r,color){
-    // arrow into tray
-    ctx.save();
-    ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=Math.max(2,r*0.14);ctx.lineCap='round';
-    ctx.beginPath();ctx.moveTo(cx,cy-r*0.6);ctx.lineTo(cx,cy+r*0.15);ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(cx-r*0.25,cy-r*0.1);ctx.lineTo(cx,cy+r*0.2);ctx.lineTo(cx+r*0.25,cy-r*0.1);
-    ctx.closePath();ctx.fill();
-    ctx.beginPath();
-    ctx.moveTo(cx-r*0.6,cy+r*0.4);ctx.lineTo(cx-r*0.6,cy+r*0.6);
-    ctx.lineTo(cx+r*0.6,cy+r*0.6);ctx.lineTo(cx+r*0.6,cy+r*0.4);
-    ctx.stroke();
-    ctx.restore();
-  },
-  load(ctx,cx,cy,r,color){
-    ctx.save();ctx.translate(cx,cy);ctx.scale(1,-1);
-    ICONS.save(ctx,0,0,r,color);
-    ctx.restore();
-  },
-  reset(ctx,cx,cy,r,color){
-    ctx.save();
-    ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=Math.max(2,r*0.15);ctx.lineCap='round';
-    ctx.beginPath();ctx.arc(cx,cy,r*0.55,Math.PI*0.2,Math.PI*1.6,false);ctx.stroke();
-    const ang=Math.PI*1.6;
-    const ax=cx+Math.cos(ang)*r*0.55, ay=cy+Math.sin(ang)*r*0.55;
-    ctx.beginPath();
-    ctx.moveTo(ax,ay);
-    ctx.lineTo(ax-r*0.28,ay+r*0.05);
-    ctx.lineTo(ax-r*0.05,ay-r*0.28);
-    ctx.closePath();ctx.fill();
-    ctx.restore();
-  },
-};
-
-// ───────────────────────────────────────────
-// Button registry — each entry knows its rect, icon, label, key/action.
-// ───────────────────────────────────────────
 function getMobileButtons(){
-  const U=UI.U;
-  const big=Math.round(78*U);         // primary thumb-zone buttons
-  const tb=Math.round(46*U);           // top-bar icon buttons
-  const gap=Math.round(10*U);
-  const pad=Math.round(12*U);
-  const yBot=H-pad-big;
-  const yTop=pad;
-  const arr=[];
-  // BOTTOM-LEFT — rotation pad (two big buttons)
-  arr.push({x:pad,            y:yBot, w:big,h:big, key:'ArrowLeft',  icon:'rotL', label:'ROT',  hold:true, color:'200,210,230'});
-  arr.push({x:pad+big+gap,    y:yBot, w:big,h:big, key:'ArrowRight', icon:'rotR', label:'ROT',  hold:true, color:'200,210,230'});
-  // TOP-LEFT — HUD toggle (small)
-  arr.push({x:pad,            y:yTop, w:tb, h:tb, _action:'hud',  icon:(hudOpen?'hudL':'hudR'), label:'HUD', color:'255,170,50'});
-  // TOP-CENTER — warp-, pause, warp+ cluster
-  const cx=W/2;
-  arr.push({x:cx-tb*1.5-gap, y:yTop, w:tb, h:tb, key:'KeyZ',   icon:'warpBack', label:'WARP', color:'255,235,90'});
-  arr.push({x:cx-tb/2,       y:yTop, w:tb, h:tb, key:'Escape', icon:'pause',    label:'PAUSE', color:'255,170,50'});
-  arr.push({x:cx+tb/2+gap,   y:yTop, w:tb, h:tb, key:'KeyX',   icon:'warpFwd',  label:'WARP', color:'255,235,90'});
-  // TOP-RIGHT — cam, brake, lock, menu
-  let txr=W-pad-tb;
-  arr.push({x:txr, y:yTop, w:tb, h:tb, _action:'drawer', icon:'menu',   label:'MENU',  color:'200,220,255'}); txr-=tb+gap;
-  arr.push({x:txr, y:yTop, w:tb, h:tb, key:'KeyH',       icon:'lock',   label:'LOCK',  color:'120,180,255'}); txr-=tb+gap;
-  arr.push({x:txr, y:yTop, w:tb, h:tb, key:'KeyB',       icon:'brake',  label:'BRAKE', color:'255,90,90'});   txr-=tb+gap;
-  arr.push({x:txr, y:yTop, w:tb, h:tb, key:'KeyC',       icon:'camera', label:'CAM',   color:'200,220,255'});
-  return arr;
-}
+  const s=Math.max(0.65,Math.min(1,Math.min(W,H)/420));
+  const bw=Math.floor(44*s),bh=Math.floor(38*s),gap=3;
+  const padB=8;
+  // Left cluster — bottom-left
+  const lx=8;
+  const y1=H-padB-bh,y2=y1-bh-gap,y3=y2-bh-gap;
+  // Right cluster — bottom-right
+  const rx=W-8-bw;
+  const rx2=rx-bw-gap;
+  return[
+    // Left — rotation (hold)
+    {x:lx,y:y1,w:bw,h:bh,key:'ArrowLeft',label:'\u25C0',hold:true,desc:'ROT'},
+    {x:lx+bw+gap,y:y1,w:bw,h:bh,key:'ArrowRight',label:'\u25B6',hold:true,desc:'ROT'},
+    // Left row 2 — warp
+    {x:lx,y:y2,w:bw,h:bh,key:'KeyZ',label:'\u25C0\u25C0',desc:'SLOW'},
+    {x:lx+bw+gap,y:y2,w:bw,h:bh,key:'KeyX',label:'\u25B6\u25B6',desc:'FAST'},
+    // Left row 3
+    {x:lx,y:y3,w:bw,h:bh,key:'Escape',label:'\u23F8',desc:'PAUSE'},
+    {x:lx+bw+gap,y:y3,w:bw,h:bh,key:'KeyT',label:'\u23F1',desc:'WARP'},
 
-function getMobileDrawerButtons(){
-  const U=UI.U;
-  const bw=Math.round(140*U), bh=Math.round(96*U), gap=Math.round(12*U);
-  const cols=2;
-  const drawerW=cols*bw+(cols+1)*gap;
-  const startX=Math.round(W/2-drawerW/2+gap);
-  const startY=Math.round(150*U);
-  const items=[
-    {key:'KeyM', icon:'map',   label:'MAP',   color:'120,200,255'},
-    {key:'KeyL', icon:'grid',  label:'GRID',  color:'180,180,200'},
-    {key:'KeyJ', icon:'chain', label:'CHAIN', color:'100,180,255'},
-    {key:'KeyP', icon:'spin',  label:'SPIN',  color:'200,200,80'},
-    {key:'KeyK', icon:'send',  label:'SEND',  color:'120,255,120'},
-    {key:'F5',   icon:'save',  label:'SAVE',  color:'120,220,180'},
-    {key:'F9',   icon:'load',  label:'LOAD',  color:'120,220,180'},
-    {key:'KeyR', icon:'reset', label:'RESET', color:'255,120,120'},
+    // Right — throttle (hold)
+    {x:rx,y:y1,w:bw,h:bh,key:'Space',label:'CUT',desc:'0%',color:'100,255,100'},
+    {x:rx2,y:y1,w:bw,h:bh,key:'ShiftLeft',label:'MAX',desc:'100%',color:'255,140,50'},
+    {x:rx,y:y2,w:bw,h:bh,key:'ArrowDown',label:'\u25BC',desc:'THR',hold:true},
+    {x:rx2,y:y2,w:bw,h:bh,key:'ArrowUp',label:'\u25B2',desc:'THR',hold:true},
+    {x:rx,y:y3,w:bw,h:bh,key:'KeyB',label:'STOP',desc:'BRAKE',color:'255,80,80'},
+    {x:rx2,y:y3,w:bw,h:bh,key:'KeyH',label:'\u2316',desc:'HEAD',color:'80,160,255'},
+
+    // Center row — mission actions
+    {x:W/2-bw*1.5-gap,y:y1,w:bw,h:bh,key:'KeyJ',label:'\u26D3',desc:'CHAIN',color:'100,180,255'},
+    {x:W/2-bw/2,y:y1,w:bw,h:bh,key:'KeyC',label:'\u25CE',desc:'CAM'},
+    {x:W/2+bw/2+gap,y:y1,w:bw,h:bh,key:'KeyM',label:'\u25A6',desc:'MAP'},
+    // Center row 2 — extra
+    {x:W/2-bw*1.5-gap,y:y2,w:bw,h:bh,key:'KeyP',label:'\u21BB',desc:'SPIN',color:'200,200,80'},
+    {x:W/2-bw/2,y:y2,w:bw,h:bh,key:'KeyK',label:'\u2605',desc:'SEND',color:'80,255,80'},
+    {x:W/2+bw/2+gap,y:y2,w:bw,h:bh,key:'KeyL',label:'#',desc:'GRID'},
   ];
-  const arr=[];
-  items.forEach((it,i)=>{
-    const c=i%cols, r=Math.floor(i/cols);
-    arr.push({x:startX+c*(bw+gap), y:startY+r*(bh+gap), w:bw, h:bh, key:it.key, icon:it.icon, label:it.label, color:it.color});
-  });
-  arr.push({x:Math.round(W/2-bw/2), y:startY+Math.ceil(items.length/cols)*(bh+gap)+gap, w:bw, h:Math.round(64*U), _action:'close-drawer', label:'CLOSE', color:'180,180,200'});
-  return arr;
 }
 
-function _isThrottleLocked(){return typeof isThrottleLocked==='function'?isThrottleLocked():false;}
-
-// Throttle slider rect — right edge, occupies roughly the lower 55% of screen.
-function getThrottleSliderRect(){
-  const U=UI.U;
-  const w=Math.round(Math.min(80*U, W*0.12));
-  const pad=Math.round(12*U);
-  const top=Math.round(Math.max(80*U, H*0.18));
-  const bot=H-Math.round(12*U)-Math.round(78*U)-Math.round(20*U); // sit just above rotation pad
-  return{x:W-pad-w, y:top, w:w, h:Math.max(160,bot-top)};
-}
-
-function drawIconButton(b){
-  const pressed=b.key&&keys[b.key];
-  const col=b.color||'200,200,220';
-  const br=Math.round(10*UI.U);
-  // Body
-  ctx.fillStyle=pressed?'rgba('+col+',0.35)':'rgba(12,18,30,0.78)';
-  ctx.beginPath();
-  ctx.moveTo(b.x+br,b.y);ctx.lineTo(b.x+b.w-br,b.y);ctx.quadraticCurveTo(b.x+b.w,b.y,b.x+b.w,b.y+br);
-  ctx.lineTo(b.x+b.w,b.y+b.h-br);ctx.quadraticCurveTo(b.x+b.w,b.y+b.h,b.x+b.w-br,b.y+b.h);
-  ctx.lineTo(b.x+br,b.y+b.h);ctx.quadraticCurveTo(b.x,b.y+b.h,b.x,b.y+b.h-br);
-  ctx.lineTo(b.x,b.y+br);ctx.quadraticCurveTo(b.x,b.y,b.x+br,b.y);ctx.closePath();
-  ctx.fill();
-  ctx.strokeStyle=pressed?'rgba('+col+',1)':'rgba('+col+',0.5)';
-  ctx.lineWidth=1.5;ctx.stroke();
-  // Icon (centered, ~55% of min dim)
-  const r=Math.min(b.w,b.h)*0.32;
-  const icCol=pressed?'rgb('+col+')':'rgba(255,255,255,0.92)';
-  // Position icon higher if a label is present
-  const labelOn=!!b.label;
-  const icY=labelOn?b.y+b.h*0.42:b.y+b.h*0.5;
-  if(b.icon&&ICONS[b.icon])ICONS[b.icon](ctx,b.x+b.w/2,icY,r,icCol);
-  // Label
-  if(b.label){
-    const fs=Math.max(9,Math.floor(b.h*0.16));
-    ctx.font='600 '+fs+'px Orbitron,sans-serif';ctx.textAlign='center';
-    ctx.fillStyle=pressed?'rgb('+col+')':'rgba(255,255,255,0.85)';
-    ctx.fillText(b.label,b.x+b.w/2,b.y+b.h-Math.max(8,b.h*0.12));
-  }
-}
-
-function drawThrottleSlider(){
-  const r=getThrottleSliderRect();
-  _throttleSliderRect=r;
-  const locked=_isThrottleLocked();
-  const t=Math.max(0,Math.min(1,rkt.throttle||0));
-  // Track
-  ctx.fillStyle='rgba(8,12,22,0.78)';
-  ctx.fillRect(r.x,r.y,r.w,r.h);
-  ctx.strokeStyle=locked?'rgba(120,120,120,0.5)':'rgba(255,170,80,0.45)';
-  ctx.lineWidth=1.5;ctx.strokeRect(r.x,r.y,r.w,r.h);
-  // Fill (from bottom)
-  const fillH=r.h*t;
-  const grd=ctx.createLinearGradient(r.x,r.y+r.h-fillH,r.x,r.y+r.h);
-  if(locked){
-    grd.addColorStop(0,'rgba(120,120,130,0.6)');grd.addColorStop(1,'rgba(60,60,70,0.7)');
-  }else{
-    grd.addColorStop(0,'rgba(255,200,90,0.85)');
-    grd.addColorStop(1,'rgba(255,120,40,0.95)');
-  }
-  ctx.fillStyle=grd;
-  ctx.fillRect(r.x+3,r.y+r.h-fillH+0,r.w-6,fillH);
-  // Tick marks every 25%
-  ctx.strokeStyle='rgba(255,255,255,0.15)';ctx.lineWidth=1;
-  for(let i=1;i<=3;i++){
-    const y=r.y+r.h-r.h*(i*0.25);
-    ctx.beginPath();ctx.moveTo(r.x+4,y);ctx.lineTo(r.x+r.w-4,y);ctx.stroke();
-  }
-  // Handle indicator
-  const hy=r.y+r.h-fillH;
-  ctx.fillStyle=locked?'rgba(180,180,180,0.85)':'rgba(255,250,240,0.95)';
-  ctx.fillRect(r.x-3,hy-3,r.w+6,6);
-  // Top cap MAX, bottom cap CUT labels
-  ctx.font='700 '+Math.max(9,Math.floor(r.w*0.22))+'px Orbitron,sans-serif';
-  ctx.textAlign='center';
-  ctx.fillStyle='rgba(255,255,255,0.55)';
-  ctx.fillText('MAX',r.x+r.w/2,r.y+r.w*0.45);
-  ctx.fillText('CUT',r.x+r.w/2,r.y+r.h-r.w*0.18);
-  // Current % label inside handle area
-  ctx.font='700 '+Math.max(11,Math.floor(r.w*0.28))+'px Orbitron,sans-serif';
-  ctx.fillStyle=locked?'rgba(180,180,180,0.9)':'rgba(255,255,255,0.95)';
-  const pctText=locked?'LOCK':((t*100).toFixed(0)+'%');
-  ctx.fillText(pctText, r.x+r.w/2, Math.max(r.y+r.w*0.45+22, Math.min(r.y+r.h-r.w*0.45, hy-8)));
-  // THR title above
-  ctx.font='600 '+Math.max(9,Math.floor(r.w*0.22))+'px Orbitron,sans-serif';
-  ctx.fillStyle='rgba(255,170,80,0.7)';
-  ctx.fillText('THR',r.x+r.w/2, r.y-6);
-  ctx.textAlign='left';
+// HUD toggle button — always visible, top-left
+function getHudToggle(){
+  const s=checkMobile()?1:0;
+  if(!s&&W>=900)return null; // no toggle needed on large desktop
+  return{x:8,y:8,w:36,h:28};
 }
 
 function drawMobileControls(){
+  const isMobile=checkMobile();
   if(phase!=='flying')return;
-  if(!checkMobile())return;
+
+  // HUD toggle button — small tab
+  const tog=getHudToggle();
+  if(tog){
+    ctx.fillStyle=hudOpen?'rgba(255,170,50,0.2)':'rgba(10,15,25,0.7)';
+    ctx.fillRect(tog.x,tog.y,tog.w,tog.h);
+    ctx.strokeStyle='rgba(255,170,50,0.3)';ctx.lineWidth=1;ctx.strokeRect(tog.x,tog.y,tog.w,tog.h);
+    ctx.font='600 10px Orbitron,sans-serif';ctx.textAlign='center';
+    ctx.fillStyle=hudOpen?'#fa3':'#889';
+    ctx.fillText(hudOpen?'\u25C0':'\u25B6',tog.x+tog.w/2,tog.y+19);
+  }
+
+  if(!isMobile)return;
+
+  // Touch buttons
   _mobileButtons=getMobileButtons();
-  for(const b of _mobileButtons)drawIconButton(b);
-  drawThrottleSlider();
-  if(mobileDrawerOpen){
-    ctx.fillStyle='rgba(0,0,0,0.78)';ctx.fillRect(0,0,W,H);
-    ctx.font='700 '+Math.round(22*UI.U)+'px Orbitron,sans-serif';ctx.textAlign='center';
-    ctx.fillStyle='#fa3';
-    ctx.fillText('ACTIONS',W/2,Math.round(124*UI.U));
-    _mobileDrawerButtons=getMobileDrawerButtons();
-    for(const b of _mobileDrawerButtons)drawIconButton(b);
-    ctx.textAlign='left';
+  ctx.save();
+  for(const b of _mobileButtons){
+    const pressed=keys[b.key];
+    const col=b.color||'200,200,220';
+    // Button background
+    ctx.fillStyle=pressed?'rgba('+col+',0.35)':'rgba(20,25,35,0.75)';
+    const br=4;
+    ctx.beginPath();ctx.moveTo(b.x+br,b.y);ctx.lineTo(b.x+b.w-br,b.y);ctx.quadraticCurveTo(b.x+b.w,b.y,b.x+b.w,b.y+br);
+    ctx.lineTo(b.x+b.w,b.y+b.h-br);ctx.quadraticCurveTo(b.x+b.w,b.y+b.h,b.x+b.w-br,b.y+b.h);
+    ctx.lineTo(b.x+br,b.y+b.h);ctx.quadraticCurveTo(b.x,b.y+b.h,b.x,b.y+b.h-br);
+    ctx.lineTo(b.x,b.y+br);ctx.quadraticCurveTo(b.x,b.y,b.x+br,b.y);ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle=pressed?'rgba('+col+',0.7)':'rgba(255,255,255,0.25)';
+    ctx.lineWidth=1;ctx.stroke();
+    // Label
+    ctx.font='600 '+Math.floor(b.w*.3)+'px Orbitron,sans-serif';ctx.textAlign='center';
+    ctx.fillStyle=pressed?'rgba('+col+',1)':'rgba(255,255,255,0.7)';
+    ctx.fillText(b.label,b.x+b.w/2,b.y+b.h*(b.desc?0.42:0.62));
+    if(b.desc){
+      ctx.font='400 '+Math.floor(b.w*.18)+'px Exo 2,sans-serif';
+      ctx.fillStyle='rgba(255,255,255,0.4)';
+      ctx.fillText(b.desc,b.x+b.w/2,b.y+b.h*0.8);
+    }
   }
+  ctx.restore();
 }
 
-// ───────────────────────────────────────────
-// Touch routing
-// ───────────────────────────────────────────
-function _hitButton(x,y,btns){
-  for(const b of btns){if(x>=b.x&&x<=b.x+b.w&&y>=b.y&&y<=b.y+b.h)return b;}
-  return null;
-}
-function _inRect(x,y,r){return r&&x>=r.x&&x<=r.x+r.w&&y>=r.y&&y<=r.y+r.h;}
-
-function _applySliderTouch(ty){
-  const r=_throttleSliderRect;if(!r)return;
-  if(_isThrottleLocked())return;
-  const frac=1-Math.max(0,Math.min(1,(ty-r.y)/r.h));
-  rkt.throttle=Math.max(0,Math.min(1,frac));
-}
-
-function _onTouchStart(e){
+// Touch event handling
+function handleTouchStart(e){
   if(phase==='setup'||phase==='briefing')return;
-  if(!checkMobile()){e.preventDefault();return;}
-  const drawer=mobileDrawerOpen;
-  const activeBtns=drawer?getMobileDrawerButtons():getMobileButtons();
-  for(const t of e.changedTouches){
-    const tx=t.clientX, ty=t.clientY;
-    // 1) Buttons
-    const hit=_hitButton(tx,ty,activeBtns);
-    if(hit){
-      _touches.set(t.identifier,{role:'button',btn:hit});
-      if(hit._action==='hud'){hudOpen=!hudOpen;}
-      else if(hit._action==='drawer'){mobileDrawerOpen=true;}
-      else if(hit._action==='close-drawer'){mobileDrawerOpen=false;}
-      else if(hit.key){
-        window.dispatchEvent(new KeyboardEvent('keydown',{code:hit.key,key:hit.key,bubbles:true}));
-        if(hit.hold)keys[hit.key]=true;
+  const btns=checkMobile()?getMobileButtons():[];
+  const tog=getHudToggle();
+  for(const touch of e.changedTouches){
+    const tx=touch.clientX,ty=touch.clientY;
+    // HUD toggle
+    if(tog&&tx>=tog.x&&tx<=tog.x+tog.w&&ty>=tog.y&&ty<=tog.y+tog.h){
+      hudOpen=!hudOpen;e.preventDefault();return;
+    }
+    // Check if touch hit a mobile button
+    let hitButton=false;
+    for(const b of btns){
+      if(tx>=b.x&&tx<=b.x+b.w&&ty>=b.y&&ty<=b.y+b.h){
+        const evt=new KeyboardEvent('keydown',{code:b.key,key:b.key,bubbles:true});
+        window.dispatchEvent(evt);
+        if(b.hold)keys[b.key]=true;
+        hitButton=true;
+        break;
       }
-      continue;
     }
-    if(drawer){continue;} // touches outside drawer buttons are ignored while drawer is open
-    // 2) Throttle slider — direct manipulation
-    if(_inRect(tx,ty,_throttleSliderRect)){
-      _touches.set(t.identifier,{role:'throttle'});
-      _applySliderTouch(ty);
-      continue;
-    }
-    // 3) World — pan / pinch
-    let existingWorld=null;
-    for(const[id,info]of _touches){if(info.role==='world'){existingWorld=id;break;}}
-    if(existingWorld!==null){
-      _touches.get(existingWorld).role='pinch';
-      _touches.set(t.identifier,{role:'pinch'});
-      const a=e.touches[0], b=e.touches[1];
-      if(a&&b)_pinchLastDist=Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY);
-    }else{
-      _touches.set(t.identifier,{role:'world',lastX:tx,lastY:ty});
+    // If touch didn't hit a mobile button, forward as a click for panels
+    // (GoTo, Camera, Warp, Orbit Cheat, Tips, Pause menu)
+    if(!hitButton){
+      canvas.dispatchEvent(new MouseEvent('click',{clientX:tx,clientY:ty,bubbles:true}));
     }
   }
   e.preventDefault();
 }
-
-function _onTouchMove(e){
+function handleTouchEnd(e){
   if(!checkMobile())return;
-  for(const t of e.changedTouches){
-    const info=_touches.get(t.identifier);
-    if(!info)continue;
-    if(info.role==='throttle'){
-      _applySliderTouch(t.clientY);
-    }else if(info.role==='world'){
-      const dx=t.clientX-info.lastX, dy=t.clientY-info.lastY;
-      info.lastX=t.clientX; info.lastY=t.clientY;
-      if(Math.abs(dx)>0.5||Math.abs(dy)>0.5){
-        const mpp=Math.pow(10,cam.zoom);
-        cam.target='free';
-        cam.x-=dx*mpp;
-        cam.y+=dy*mpp;
-      }
+  const btns=getMobileButtons();
+  const activeTouches=new Set();
+  for(const touch of e.touches){
+    const tx=touch.clientX,ty=touch.clientY;
+    for(const b of btns){
+      if(b.hold&&tx>=b.x&&tx<=b.x+b.w&&ty>=b.y&&ty<=b.y+b.h)activeTouches.add(b.key);
     }
   }
-  // Two-finger pinch
-  let pinch=[];
-  for(const t of e.touches){const info=_touches.get(t.identifier);if(info&&info.role==='pinch')pinch.push(t);}
-  if(pinch.length>=2){
-    const d=Math.hypot(pinch[0].clientX-pinch[1].clientX,pinch[0].clientY-pinch[1].clientY);
-    if(_pinchLastDist>0){
-      const ratio=d/_pinchLastDist;
-      cam.zoom-=Math.log(ratio)/Math.log(10);
-      cam.zoom=Math.max(-1.5,Math.min(14.5,cam.zoom));
-    }
-    _pinchLastDist=d;
+  for(const b of btns){
+    if(b.hold&&!activeTouches.has(b.key))keys[b.key]=false;
   }
   e.preventDefault();
 }
-
-function _onTouchEnd(e){
-  for(const t of e.changedTouches){
-    const info=_touches.get(t.identifier);
-    if(info){
-      if(info.role==='button'&&info.btn&&info.btn.hold&&info.btn.key){
-        keys[info.btn.key]=false;
-      }
-      _touches.delete(t.identifier);
-    }
+canvas.addEventListener('touchstart',handleTouchStart,{passive:false});
+canvas.addEventListener('touchend',handleTouchEnd,{passive:false});
+canvas.addEventListener('touchcancel',handleTouchEnd,{passive:false});
+canvas.addEventListener('touchmove',e=>{if(checkMobile()){handleTouchStart(e);}},{passive:false});
+// Also handle HUD toggle via mouse click (for desktop small-window testing)
+canvas.addEventListener('click',e=>{
+  const tog=getHudToggle();
+  if(tog&&e.clientX>=tog.x&&e.clientX<=tog.x+tog.w&&e.clientY>=tog.y&&e.clientY<=tog.y+tog.h){
+    hudOpen=!hudOpen;
   }
-  if(_touches.size<2)_pinchLastDist=0;
-  e.preventDefault();
-}
+});
 
-canvas.addEventListener('touchstart',_onTouchStart,{passive:false});
-canvas.addEventListener('touchmove', _onTouchMove, {passive:false});
-canvas.addEventListener('touchend',  _onTouchEnd,  {passive:false});
-canvas.addEventListener('touchcancel',_onTouchEnd, {passive:false});
-
+// Hook into render
 const _origDrawNotes=drawNotes;
 drawNotes=function(){_origDrawNotes();drawMobileControls();};
-
-window.addEventListener('resize',_detectMobile);
 </script>
 </body>
 </html>
