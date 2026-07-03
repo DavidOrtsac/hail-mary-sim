@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>EARTHSHINE · UI Lab</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: #03060d url('https://storage.googleapis.com/hail-mary-sim-textures/source/earth_16k_shallow.jpg') no-repeat center 30%;
+    background-size: 200% auto;
+    font-family: 'Open Sans', 'Helvetica Neue', Inter, system-ui, -apple-system, sans-serif;
+    color: #fff; overflow: hidden;
+  }
+  /* dim the background so the UI reads cleanly */
+  body::before {
+    content: ""; position: fixed; inset: 0;
+    background: linear-gradient(to top, rgba(0,0,0,.65) 0%, rgba(0,0,0,.30) 40%, rgba(0,0,0,.55) 100%);
+    z-index: 0; pointer-events: none;
+  }
+
+  /* ===================================================================
+     TOOLBAR
+  =================================================================== */
+  #toolbar {
+    position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
+    z-index: 10000;
+    background: rgba(8,10,14,.92); border: 1px solid rgba(255,255,255,.14);
+    padding: 10px 16px; border-radius: 6px;
+    display: flex; gap: 10px; align-items: center;
+    backdrop-filter: blur(8px);
+  }
+  #toolbar button {
+    background: rgba(255,184,90,.86); color: #02040a;
+    border: 1.5px solid #ffb85a; padding: 7px 14px;
+    font: 700 11px/1 system-ui; letter-spacing: .15em;
+    cursor: pointer; border-radius: 3px; text-transform: uppercase;
+  }
+  #toolbar button:hover { background: #ffb85a; }
+  #toolbar button.ghost {
+    background: transparent; color: rgba(255,255,255,.85);
+    border-color: rgba(255,255,255,.25);
+  }
+  #toolbar .hint {
+    color: rgba(255,255,255,.55); font-size: 11px; margin-left: 6px;
+    letter-spacing: .04em;
+  }
+  #toolbar .pip { width: 6px; height: 6px; border-radius: 50%; background: #7adba0; display: inline-block; margin-right: 6px; vertical-align: middle; animation: pulse 1.6s infinite; }
+  @keyframes pulse { 0%,100%{opacity:.5} 50%{opacity:1} }
+
+  /* ===================================================================
+     DRAGGABLE WRAPPER
+  =================================================================== */
+  .lab-panel {
+    position: absolute; z-index: 100;
+    outline: 1px dashed rgba(255,184,90,0); outline-offset: 4px;
+    transition: outline-color .12s;
+  }
+  .lab-panel:hover { outline-color: rgba(255,184,90,.35); }
+  .lab-panel.dragging { outline: 2px solid rgba(255,184,90,.85); cursor: grabbing; }
+  .lab-handle {
+    position: absolute; top: -20px; left: 0;
+    background: rgba(0,0,0,.78); color: rgba(255,184,90,.85);
+    padding: 3px 8px; font: 700 9px/1 system-ui; letter-spacing: .15em;
+    border-radius: 2px 2px 0 0; cursor: grab; user-select: none;
+    border: 1px solid rgba(255,184,90,.35);
+    border-bottom: none;
+    pointer-events: auto; opacity: 0; transition: opacity .12s;
+  }
+  .lab-panel:hover .lab-handle,
+  .lab-panel.dragging .lab-handle { opacity: 1; }
+  .lab-handle .id { color: rgba(180,210,240,.5); margin-left: 8px; font-weight: 400; }
+  .lab-coord {
+    position: absolute; top: -20px; right: 0;
+    background: rgba(0,0,0,.78); color: rgba(255,255,255,.6);
+    padding: 3px 8px; font: 400 9px/1 'SF Mono', Menlo, monospace;
+    border-radius: 2px 2px 0 0; pointer-events: none;
+    border: 1px solid rgba(255,184,90,.35);
+    border-bottom: none;
+    opacity: 0; transition: opacity .12s;
+  }
+  .lab-panel.dragging .lab-coord,
+  .lab-panel:hover .lab-coord { opacity: 1; }
+
+  /* ===================================================================
+     ISS BROADCAST STRIP — original styles copied verbatim from index.html
+  =================================================================== */
+  #issMapWrap {
+    width: 300px; height: 170px; background: #0a1322;
+    border: 1px solid rgba(255,255,255,.10); overflow: hidden;
+    box-shadow: 0 1px 0 rgba(255,255,255,.04) inset;
+    position: relative;
+  }
+  #issMapWrap .mapLabel {
+    position: absolute; left: 6px; top: 5px; font-size: 9px;
+    letter-spacing: .14em; color: rgba(255,255,255,.75);
+    text-transform: uppercase; font-weight: 700;
+    text-shadow: 0 1px 2px rgba(0,0,0,.8); z-index: 2;
+  }
+  #issMapImg {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    object-fit: cover; opacity: .82;
+    filter: saturate(1.05) brightness(.95);
+  }
+  #issMapDot {
+    position: absolute; left: 56%; top: 38%;
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #ff5050; box-shadow: 0 0 0 2px rgba(255,255,255,.6), 0 0 12px #ff5050;
+    transform: translate(-50%,-50%);
+  }
+  #issMapTrack {
+    position: absolute; inset: 0; pointer-events: none;
+    background:
+      radial-gradient(ellipse 60% 30% at 30% 60%, rgba(255,255,255,.20), transparent 60%),
+      radial-gradient(ellipse 50% 25% at 75% 30%, rgba(255,255,255,.15), transparent 60%);
+  }
+
+  #issPlaceName {
+    padding: 6px 10px 2px;
+    color: #fff; font-weight: 300; font-size: 34px; letter-spacing: -.005em;
+    line-height: 1.1; white-space: nowrap;
+  }
+
+  #issFlagBlock {
+    display: flex; flex-direction: column; gap: 2px;
+    width: 138px; height: 124px;
+  }
+  #issFlagSlot {
+    position: relative; width: 138px; height: 92px;
+    border: 1px solid rgba(255,255,255,.16);
+    background: linear-gradient(155deg, #0c2a4d 0%, #061523 100%);
+    overflow: hidden;
+  }
+  #issFlag {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    object-fit: cover;
+  }
+  #issFlagBlock .livebadge {
+    display: flex; align-items: center; justify-content: center; gap: 7px;
+    height: 30px; background: #c8202a; color: #fff;
+    font-size: 13px; font-weight: 700; letter-spacing: .10em;
+  }
+  #issFlagBlock .livebadge .dot {
+    width: 7px; height: 7px; border-radius: 50%; background: #fff;
+    animation: issblink 1.4s infinite ease-in-out;
+  }
+  @keyframes issblink { 0%,100%{opacity:.4} 50%{opacity:1} }
+
+  #issStats {
+    width: 380px; height: 124px;
+    padding: 10px 16px; background: rgba(20,22,28,.85);
+    border: 1px solid rgba(255,255,255,.08); overflow: hidden;
+    display: flex; align-items: center;
+  }
+  #issStats .panel { display: flex; flex-direction: column; gap: 1px; width: 100%; }
+  #issStats .head {
+    font-size: 13px; font-weight: 700; letter-spacing: .02em;
+    color: #fff; margin-bottom: 5px; line-height: 1.1;
+  }
+  #issStats .row {
+    display: flex; justify-content: space-between; gap: 8px;
+    font-size: 12px; line-height: 1.3; color: #d8dfe6;
+  }
+  #issStats .row span { color: rgba(216,223,230,.66); font-weight: 500; }
+  #issStats .row b { color: #fff; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  /* EARTHSHINE-1 caption (the lower-third label) */
+  #povCaption {
+    pointer-events: none;
+    font-family: 'SF Mono', Menlo, 'Courier New', monospace;
+    font-size: 12px; background: rgba(0,0,0,.55); color: #c8d4e8;
+    padding: 9px 14px; border-radius: 4px;
+    border-left: 3px solid #5a9cff;
+    backdrop-filter: blur(6px);
+    letter-spacing: .03em; max-width: 420px;
+  }
+  #povCaption .name { color: #fff; font-weight: 700; font-size: 13px; letter-spacing: .12em; }
+  #povCaption .specs { color: #8aa0c0; font-size: 10px; margin-top: 4px; line-height: 1.45; }
+  #povCaption .tech { color: #5c7088; font-size: 9px; margin-top: 5px; font-style: italic; letter-spacing: .02em; }
+
+  /* Time chip */
+  #obsTime {
+    font-family: monospace; font-size: 11px; letter-spacing: .18em;
+    color: rgba(255,184,90,.75); background: rgba(2,6,14,.55);
+    padding: 4px 10px; border: 1px solid rgba(255,184,90,.30);
+    border-radius: 3px; pointer-events: none;
+  }
+
+  /* FPS chip */
+  #fpsChip {
+    padding: 4px 9px; font-family: monospace; font-size: 11px;
+    letter-spacing: .14em; color: rgba(180,210,240,.85);
+    background: rgba(2,6,14,.55);
+    border: 1px solid rgba(140,200,255,.22);
+    border-radius: 3px; pointer-events: none;
+  }
+
+  /* Sunset countdown card (alt telemetry mode) */
+  #issSunset {
+    width: 380px; height: 124px;
+    padding: 10px 16px; background: rgba(20,22,28,.85);
+    border: 1px solid rgba(255,255,255,.08);
+  }
+  #issSunset .big { font-size: 14px; font-weight: 700; color: #fff; line-height: 1.2; margin-bottom: 3px; }
+  #issSunset .sml { font-size: 11px; color: rgba(216,223,230,.72); line-height: 1.4; }
+  #issSunset .tag { font-size: 9px; letter-spacing: .10em; color: rgba(216,223,230,.50); margin-top: 6px; }
+  #issSunset .tag .ok { color: #7adba0; }
+
+  /* ===================================================================
+     EXPORT MODAL
+  =================================================================== */
+  #exportModal {
+    position: fixed; inset: 0; background: rgba(0,0,0,.88);
+    z-index: 20000; display: none;
+    align-items: center; justify-content: center;
+    backdrop-filter: blur(4px);
+  }
+  #exportModal.on { display: flex; }
+  #exportModal .box {
+    background: #0b0e14; padding: 24px; border-radius: 8px;
+    max-width: 800px; width: 90%; max-height: 85vh; overflow: auto;
+    border: 1px solid rgba(255,255,255,.12);
+  }
+  #exportModal h3 {
+    margin: 0 0 12px; color: #ffb85a; font-weight: 600;
+    letter-spacing: .12em; font-size: 13px; text-transform: uppercase;
+  }
+  #exportModal .desc { color: rgba(255,255,255,.6); font-size: 12px; margin-bottom: 14px; }
+  #exportModal pre {
+    background: #000; color: #c8d4e8; padding: 14px; border-radius: 4px;
+    font: 11px/1.55 'SF Mono', Menlo, monospace;
+    white-space: pre-wrap; word-wrap: break-word;
+    border: 1px solid rgba(255,255,255,.06);
+    max-height: 50vh; overflow: auto;
+  }
+  #exportModal .actions { display: flex; gap: 8px; margin-top: 14px; }
+  #exportModal button {
+    background: rgba(255,184,90,.86); color: #02040a;
+    border: 1.5px solid #ffb85a; padding: 8px 14px;
+    font: 700 11px/1 system-ui; letter-spacing: .15em;
+    cursor: pointer; border-radius: 3px; text-transform: uppercase;
+  }
+  #exportModal button.ghost {
+    background: transparent; color: rgba(255,255,255,.85);
+    border-color: rgba(255,255,255,.25);
+  }
+</style>
+</head>
+<body>
+
+<!-- ============================================================
+     TOOLBAR
+============================================================ -->
+<div id="toolbar">
+  <span class="pip"></span>
+  <button id="exportBtn">Export Layout</button>
+  <button id="resetBtn" class="ghost">Reset</button>
+  <span class="hint">Drag any panel. Hover for handle. Coords shown live.</span>
+</div>
+
+<!-- ============================================================
+     DRAGGABLE PANELS — each one wrapped in .lab-panel
+     data-name = friendly label  ·  id = the CSS id of the inner element
+============================================================ -->
+
+<!-- 1. Ground track map -->
+<div class="lab-panel" data-name="GROUND TRACK MAP" style="left:14px; bottom:14px;">
+  <span class="lab-handle">GROUND TRACK MAP <span class="id">#issMapWrap</span></span>
+  <span class="lab-coord"></span>
+  <div id="issMapWrap">
+    <span class="mapLabel">Ground Track</span>
+    <img id="issMapImg" src="https://storage.googleapis.com/hail-mary-sim-textures/source/earth_16k_nobathy.jpg" alt="">
+    <div id="issMapTrack"></div>
+    <div id="issMapDot"></div>
+  </div>
+</div>
+
+<!-- 2. Big place name -->
+<div class="lab-panel" data-name="PLACE NAME" style="left:330px; bottom:130px;">
+  <span class="lab-handle">PLACE NAME <span class="id">#issPlaceName</span></span>
+  <span class="lab-coord"></span>
+  <div id="issPlaceName">Manila, Philippines</div>
+</div>
+
+<!-- 3. Flag + LIVE NOW -->
+<div class="lab-panel" data-name="FLAG + LIVE" style="left:330px; bottom:14px;">
+  <span class="lab-handle">FLAG + LIVE <span class="id">#issFlagBlock</span></span>
+  <span class="lab-coord"></span>
+  <div id="issFlagBlock">
+    <div id="issFlagSlot">
+      <img id="issFlag" src="https://flagcdn.com/w160/ph.png" alt="PH">
+    </div>
+    <div class="livebadge"><span class="dot"></span>LIVE NOW</div>
+  </div>
+</div>
+
+<!-- 4. Country info / Mission Telemetry card -->
+<div class="lab-panel" data-name="MISSION TELEMETRY" style="left:482px; bottom:14px;">
+  <span class="lab-handle">MISSION TELEMETRY <span class="id">#issStats</span></span>
+  <span class="lab-coord"></span>
+  <div id="issStats">
+    <div class="panel">
+      <div class="head">Mission Telemetry</div>
+      <div class="row"><span>UTC</span><b>14:23:51 UTC</b></div>
+      <div class="row"><span>Altitude</span><b>1,500 km</b></div>
+      <div class="row"><span>Speed</span><b>26,247 km/h</b></div>
+      <div class="row"><span>Orbit</span><b>118 min &middot; 51.6&deg;</b></div>
+      <div class="row"><span>Sun Elevation</span><b>Daylight +24.6&deg;</b></div>
+    </div>
+  </div>
+</div>
+
+<!-- 5. Sunset countdown card (alt panel state) -->
+<div class="lab-panel" data-name="SUNSET COUNTDOWN" style="left:880px; bottom:14px;">
+  <span class="lab-handle">SUNSET COUNTDOWN <span class="id">#issSunset</span></span>
+  <span class="lab-coord"></span>
+  <div id="issSunset">
+    <div class="big">Sunset #4 in 27 min</div>
+    <div class="sml">14:50 UTC over Coral Sea</div>
+    <div class="sml">Mariana Trench &middot; 11.1°N 142.7°E</div>
+    <div class="sml">Next sunrise in 73 min</div>
+    <div class="tag">TLE: <span class="ok">LIVE</span> &middot; updated 3 min ago</div>
+  </div>
+</div>
+
+<!-- 6. EARTHSHINE-1 caption -->
+<div class="lab-panel" data-name="EARTHSHINE-1 CAPTION" style="left:14px; top:300px;">
+  <span class="lab-handle">EARTHSHINE-1 CAPTION <span class="id">#povCaption</span></span>
+  <span class="lab-coord"></span>
+  <div id="povCaption">
+    <div class="name">EARTHSHINE-1</div>
+    <div class="specs">LEO &middot; 1,500 km circular &middot; 118 min period &middot; 51.6&deg; inclination &middot; tracks ISS ground point</div>
+    <div class="tech">tech demo &middot; not affiliated with any real satellite operator</div>
+  </div>
+</div>
+
+<!-- 7. Time chip (top center in default UI) -->
+<div class="lab-panel" data-name="TIME CHIP" style="left:50%; top:60px; transform:translateX(-50%);">
+  <span class="lab-handle">TIME CHIP <span class="id">#obsTime</span></span>
+  <span class="lab-coord"></span>
+  <div id="obsTime">TIME ×1</div>
+</div>
+
+<!-- 8. FPS chip (bottom-left in default) -->
+<div class="lab-panel" data-name="FPS CHIP" style="left:14px; top:200px;">
+  <span class="lab-handle">FPS CHIP <span class="id">#fpsChip</span></span>
+  <span class="lab-coord"></span>
+  <div id="fpsChip">FPS 60</div>
+</div>
+
+
+<!-- ============================================================
+     EXPORT MODAL
+============================================================ -->
+<div id="exportModal">
+  <div class="box">
+    <h3>Exported Layout</h3>
+    <div class="desc">
+      Copy this block and paste it back in chat. I will translate these coordinates into the real <code>index.html</code> stylesheet.
+      Values are in <strong>px</strong>, <strong>vw</strong>, and <strong>vh</strong> so they scale across viewport sizes.
+    </div>
+    <pre id="exportText">/* paste the CSS here */</pre>
+    <div class="actions">
+      <button id="copyBtn">Copy to Clipboard</button>
+      <button id="closeBtn" class="ghost">Close</button>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+/* ============================================================
+   Draggable panel logic — every .lab-panel can be repositioned
+   by grabbing its drag handle. Updates inline top/left and
+   clears any auto right/bottom set by the initial layout, so
+   the export is a single positioning source-of-truth.
+============================================================ */
+function wireDraggable(panel) {
+  const handle = panel.querySelector('.lab-handle');
+  const coord  = panel.querySelector('.lab-coord');
+  let startX, startY, origLeft, origTop;
+
+  function updateCoord() {
+    const r = panel.getBoundingClientRect();
+    coord.textContent =
+      `L:${r.left|0} T:${r.top|0}  ${r.width|0}×${r.height|0}`;
+  }
+
+  handle.addEventListener('mousedown', e => {
+    e.preventDefault();
+    startX = e.clientX;
+    startY = e.clientY;
+    const r = panel.getBoundingClientRect();
+    origLeft = r.left;
+    origTop  = r.top;
+    panel.classList.add('dragging');
+    // Clear right/bottom so the panel is anchored by top/left only.
+    panel.style.right = '';
+    panel.style.bottom = '';
+    panel.style.transform = '';   // remove translateX(-50%) etc on initial
+
+    function onMove(ev) {
+      panel.style.left = (origLeft + ev.clientX - startX) + 'px';
+      panel.style.top  = (origTop  + ev.clientY - startY) + 'px';
+      updateCoord();
+    }
+    function onUp() {
+      panel.classList.remove('dragging');
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      updateCoord();
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    updateCoord();
+  });
+
+  updateCoord();
+}
+
+document.querySelectorAll('.lab-panel').forEach(wireDraggable);
+
+/* ============================================================
+   Re-sync coordinate labels when the window resizes.
+============================================================ */
+window.addEventListener('resize', () => {
+  document.querySelectorAll('.lab-panel .lab-coord').forEach(c => {
+    const panel = c.closest('.lab-panel');
+    const r = panel.getBoundingClientRect();
+    c.textContent = `L:${r.left|0} T:${r.top|0}  ${r.width|0}×${r.height|0}`;
+  });
+});
+
+/* ============================================================
+   Export — turn current positions into a CSS block I can paste
+   into index.html. Outputs vw/vh percentages so the layout
+   scales across viewports.
+============================================================ */
+function generateExport() {
+  const w = innerWidth, h = innerHeight;
+  let css = `/* EARTHSHINE UI LAYOUT — exported ${new Date().toISOString().slice(0,16).replace('T',' ')} */\n`;
+  css += `/* Viewport at export time: ${w}×${h} */\n\n`;
+
+  document.querySelectorAll('.lab-panel').forEach(panel => {
+    const id = panel.querySelector('.lab-handle .id').textContent.trim();  // e.g. "#issMapWrap"
+    const name = panel.dataset.name;
+    const r = panel.getBoundingClientRect();
+
+    const leftPct = (r.left / w * 100).toFixed(2);
+    const topPct  = (r.top  / h * 100).toFixed(2);
+    const rightPct = ((w - r.right) / w * 100).toFixed(2);
+    const bottomPct = ((h - r.bottom) / h * 100).toFixed(2);
+
+    // Pick the SHORTER anchor — top/left vs bottom/right — so an
+    // element near the bottom edge stays glued there on viewport
+    // resize, etc.
+    const useLeft   = r.left < (w - r.right);
+    const useTop    = r.top  < (h - r.bottom);
+
+    css += `/* ${name} */\n`;
+    css += `${id} {\n`;
+    css += `  position: fixed;\n`;
+    if (useLeft)  css += `  left: ${leftPct}vw;\n`;
+    else          css += `  right: ${rightPct}vw;\n`;
+    if (useTop)   css += `  top: ${topPct}vh;\n`;
+    else          css += `  bottom: ${bottomPct}vh;\n`;
+    css += `  width: ${(r.width|0)}px;\n`;
+    css += `  height: ${(r.height|0)}px;\n`;
+    css += `}\n\n`;
+  });
+
+  return css;
+}
+
+document.getElementById('exportBtn').addEventListener('click', () => {
+  document.getElementById('exportText').textContent = generateExport();
+  document.getElementById('exportModal').classList.add('on');
+});
+
+document.getElementById('closeBtn').addEventListener('click', () => {
+  document.getElementById('exportModal').classList.remove('on');
+});
+
+document.getElementById('copyBtn').addEventListener('click', async () => {
+  const text = document.getElementById('exportText').textContent;
+  try {
+    await navigator.clipboard.writeText(text);
+    const btn = document.getElementById('copyBtn');
+    const original = btn.textContent;
+    btn.textContent = 'Copied!';
+    setTimeout(() => { btn.textContent = original; }, 1400);
+  } catch(e) {
+    alert('Copy failed — please select the text manually.');
+  }
+});
+
+document.getElementById('resetBtn').addEventListener('click', () => {
+  if (!confirm('Reset all panels to their starting positions?')) return;
+  location.reload();
+});
+
+/* Close modal on outside click */
+document.getElementById('exportModal').addEventListener('click', e => {
+  if (e.target.id === 'exportModal') {
+    e.target.classList.remove('on');
+  }
+});
+
+console.log('[UI LAB] ready — drag panels by their orange handles, then click Export Layout.');
+</script>
+</body>
+</html>

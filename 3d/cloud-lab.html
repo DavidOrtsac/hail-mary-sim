@@ -1,0 +1,1044 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>EARTHSHINE · Cloud Lab</title>
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000;color:#d7e4f0;font:13px/1.4 -apple-system,BlinkMacSystemFont,'Segoe UI',Inter,system-ui,sans-serif}
+  #app{display:grid;grid-template-columns:1fr 380px;grid-template-rows:1fr 320px;height:100%}
+  #view{grid-column:1;grid-row:1;position:relative;background:#02040a;overflow:hidden}
+  #view canvas{display:block;width:100%;height:100%}
+  #panel{grid-column:2;grid-row:1 / span 2;background:#0b0e14;border-left:1px solid rgba(255,255,255,.08);overflow-y:auto;padding:0}
+  #equirect{grid-column:1;grid-row:2;background:#080a0f;border-top:1px solid rgba(255,255,255,.08);position:relative;overflow:hidden}
+  .erHeader{padding:6px 12px;font:11px/1 'SF Mono',Menlo,monospace;color:#7c98c0;letter-spacing:.14em;text-transform:uppercase;background:rgba(255,255,255,.03);display:flex;justify-content:space-between;align-items:center}
+  .erHeader .tip{color:#5c7088;font-size:10px;letter-spacing:.04em;text-transform:none}
+  #erBox{position:absolute;left:12px;right:12px;top:30px;bottom:12px;display:flex;align-items:center;justify-content:center}
+  #erCanvas,#erMask,#erBrush{position:absolute;max-width:100%;max-height:100%;border:1px solid rgba(255,255,255,.10)}
+  #erCanvas{z-index:1}
+  #erMask{z-index:2;pointer-events:none;opacity:.55;mix-blend-mode:screen;filter:hue-rotate(0deg) saturate(2)}
+  #erBrush{z-index:3;cursor:crosshair}
+  #brushPreview{position:absolute;border:1px solid #ffb85a;border-radius:50%;pointer-events:none;z-index:5;display:none;mix-blend-mode:difference}
+
+  #panel .sect{padding:9px 14px 5px;color:#ffb85a;font:600 11px/1 -apple-system,sans-serif;letter-spacing:.15em;text-transform:uppercase;border-top:1px solid rgba(255,255,255,.06);background:rgba(255,184,90,.04)}
+  #panel .sect:first-child{border-top:none}
+  .row{display:flex;align-items:center;gap:8px;padding:5px 14px;color:#d0d5dd}
+  .row label{flex:0 0 110px;font-size:11px;color:#a8b4c4}
+  .row input[type=range]{flex:1;height:16px;accent-color:#5a9cff}
+  .row .val{flex:0 0 50px;text-align:right;font:10px/1 'SF Mono',Menlo,monospace;color:#7adba0;font-variant-numeric:tabular-nums}
+  .row select,.row button{flex:1;background:rgba(0,0,0,.4);color:#e8eaf0;border:1px solid rgba(160,190,230,.32);padding:5px 8px;border-radius:3px;font:inherit;font-size:11px;cursor:pointer}
+  .row button:hover{border-color:#ffb85a;color:#ffb85a}
+  .row button.primary{background:rgba(255,184,90,.86);color:#02040a;border-color:#ffb85a;font-weight:700;letter-spacing:.14em}
+  .row.split{padding:6px 14px;gap:6px}
+  .row.split button{flex:1}
+  .check{display:flex;align-items:center;gap:8px;padding:6px 14px;color:#d0d5dd;cursor:pointer;font-size:11px}
+  .check input{accent-color:#ffb85a}
+
+  #status{position:absolute;left:14px;top:14px;z-index:10;background:rgba(0,0,0,.78);border:1px solid rgba(255,184,90,.35);padding:6px 12px;font:11px/1.4 'SF Mono',Menlo,monospace;color:#c8d4e8;border-radius:3px;max-width:420px}
+  #status .ok{color:#7adba0}
+  #status .err{color:#ff8a8a}
+  #status .pulse{display:inline-block;width:7px;height:7px;border-radius:50%;background:#7adba0;margin-right:6px;animation:pulse 1.2s infinite}
+  @keyframes pulse{0%,100%{opacity:.4}50%{opacity:1}}
+
+  #exportBox{position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:99;display:none;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
+  #exportBox.on{display:flex}
+  #exportInner{background:#0b0e14;padding:20px;border-radius:6px;width:680px;max-width:90vw;border:1px solid rgba(255,255,255,.12)}
+  #exportInner h3{margin:0 0 10px;color:#ffb85a;font-size:13px;letter-spacing:.14em;text-transform:uppercase}
+  #exportText{width:100%;height:300px;background:#000;color:#c8d4e8;border:1px solid rgba(255,255,255,.06);font:11px/1.55 'SF Mono',Menlo,monospace;padding:12px;border-radius:3px;resize:vertical}
+  #exportInner .actions{display:flex;gap:8px;margin-top:10px}
+  #exportInner button{padding:8px 14px;background:rgba(255,184,90,.86);color:#02040a;border:1.5px solid #ffb85a;font:700 11px/1 inherit;letter-spacing:.14em;cursor:pointer;border-radius:3px;text-transform:uppercase}
+  #exportInner button.ghost{background:transparent;color:#d0d5dd;border-color:rgba(255,255,255,.25)}
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div id="view">
+    <div id="status"><span class="pulse"></span>boot…</div>
+  </div>
+
+  <div id="panel">
+    <div class="sect">Cloud source</div>
+    <div class="row">
+      <label>Texture</label>
+      <select id="srcSel">
+        <option value="gmgsi" selected>NOAA GMGSI (live, 16K)</option>
+        <option value="modis">MODIS 5-day MEDIAN (16K GCS)</option>
+        <option value="bluemarble">Blue Marble Clouds (8K local)</option>
+        <option value="threejs2k">three.js stock 2K</option>
+      </select>
+    </div>
+    <div class="row split">
+      <button id="reloadBtn">Reload source</button>
+    </div>
+
+    <div class="sect">Mask brush</div>
+    <label class="check"><input type="checkbox" id="brushOn"> Brush mode (B)</label>
+    <div class="row"><label>Brush size</label><input type="range" id="brushSize" min="2" max="80" step="1" value="14"><span class="val" id="brushSizeV">14</span></div>
+    <div class="row"><label>Mode</label>
+      <select id="brushMode">
+        <option value="paint" selected>Paint (mask)</option>
+        <option value="erase">Erase</option>
+      </select>
+    </div>
+    <div class="row split">
+      <button id="maskClear">Clear mask</button>
+      <button id="maskApply" class="primary">Apply</button>
+    </div>
+    <div class="row"><label>Coverage</label><span class="val" id="maskCov">0.00%</span></div>
+
+    <div class="sect">Cloud shader</div>
+    <div class="row"><label>Opacity</label><input type="range" id="u_opacity" min="0" max="2" step="0.01" value="1.0"><span class="val" id="u_opacityV">1.00</span></div>
+    <div class="row"><label>Brightness</label><input type="range" id="u_bright" min="0" max="2" step="0.01" value="1.0"><span class="val" id="u_brightV">1.00</span></div>
+    <div class="row"><label>Tint R</label><input type="range" id="u_tintR" min="0" max="2" step="0.01" value="1.0"><span class="val" id="u_tintRV">1.00</span></div>
+    <div class="row"><label>Tint G</label><input type="range" id="u_tintG" min="0" max="2" step="0.01" value="1.0"><span class="val" id="u_tintGV">1.00</span></div>
+    <div class="row"><label>Tint B</label><input type="range" id="u_tintB" min="0" max="2" step="0.01" value="1.0"><span class="val" id="u_tintBV">1.00</span></div>
+    <div class="row"><label>Alpha low</label><input type="range" id="u_aLow" min="0" max="0.5" step="0.005" value="0.05"><span class="val" id="u_aLowV">0.05</span></div>
+    <div class="row"><label>Alpha high</label><input type="range" id="u_aHigh" min="0.1" max="1" step="0.005" value="0.70"><span class="val" id="u_aHighV">0.70</span></div>
+    <div class="row"><label>Silver lining</label><input type="range" id="u_silver" min="0" max="3" step="0.01" value="0.95"><span class="val" id="u_silverV">0.95</span></div>
+    <div class="row"><label>HG anisotropy</label><input type="range" id="u_hg" min="0" max="0.95" step="0.01" value="0.80"><span class="val" id="u_hgV">0.80</span></div>
+    <div class="row"><label>Limb start</label><input type="range" id="u_limbS" min="0" max="0.5" step="0.005" value="0.02"><span class="val" id="u_limbSV">0.02</span></div>
+    <div class="row"><label>Limb end</label><input type="range" id="u_limbE" min="0.05" max="0.5" step="0.005" value="0.18"><span class="val" id="u_limbEV">0.18</span></div>
+    <div class="row"><label>Self-shadow</label><input type="range" id="u_self" min="0" max="1" step="0.01" value="0.40"><span class="val" id="u_selfV">0.40</span></div>
+    <div class="row"><label>Material opacity</label><input type="range" id="u_matOp" min="0" max="1" step="0.01" value="0.78"><span class="val" id="u_matOpV">0.78</span></div>
+    <div class="row"><label>Bump scale</label><input type="range" id="u_bump" min="0" max="0.2" step="0.005" value="0.04"><span class="val" id="u_bumpV">0.04</span></div>
+
+    <div class="sect">Atmosphere</div>
+    <div class="row"><label>Sun intensity</label><input type="range" id="a_sun" min="0" max="30" step="0.1" value="14"><span class="val" id="a_sunV">14.0</span></div>
+    <div class="row"><label>Rayleigh βR</label><input type="range" id="a_rR" min="0" max="5" step="0.01" value="0.58"><span class="val" id="a_rRV">0.58</span></div>
+    <div class="row"><label>Rayleigh βG</label><input type="range" id="a_rG" min="0" max="5" step="0.01" value="1.35"><span class="val" id="a_rGV">1.35</span></div>
+    <div class="row"><label>Rayleigh βB</label><input type="range" id="a_rB" min="0" max="5" step="0.01" value="3.31"><span class="val" id="a_rBV">3.31</span></div>
+    <div class="row"><label>Mie β (orange)</label><input type="range" id="a_mB" min="0" max="1" step="0.005" value="0.21"><span class="val" id="a_mBV">0.21</span></div>
+    <div class="row"><label>Mie anisotropy</label><input type="range" id="a_mG" min="0" max="0.95" step="0.01" value="0.76"><span class="val" id="a_mGV">0.76</span></div>
+    <div class="row"><label>Rayleigh H</label><input type="range" id="a_rH" min="0.01" max="0.2" step="0.001" value="0.08"><span class="val" id="a_rHV">0.080</span></div>
+    <div class="row"><label>Mie H</label><input type="range" id="a_mH" min="0.001" max="0.05" step="0.001" value="0.012"><span class="val" id="a_mHV">0.012</span></div>
+    <div class="row"><label>Limb alpha</label><input type="range" id="a_alpha" min="0" max="3" step="0.01" value="1.4"><span class="val" id="a_alphaV">1.40</span></div>
+
+    <div class="sect">View</div>
+    <div class="row"><label>Camera dist</label><input type="range" id="camDist" min="65" max="200" step="1" value="80"><span class="val" id="camDistV">80</span></div>
+    <div class="row"><label>Sun longitude</label><input type="range" id="sunLon" min="-180" max="180" step="1" value="-45"><span class="val" id="sunLonV">-45</span></div>
+
+    <div class="sect">Export</div>
+    <div class="row split">
+      <button id="exportBtn" class="primary">PRINT settings + mask</button>
+    </div>
+    <div class="row split">
+      <button id="dlMask">Download mask PNG</button>
+    </div>
+  </div>
+
+  <div id="equirect">
+    <div class="erHeader">
+      <span>Cloud equirect <span id="erDims"></span></span>
+      <span class="tip">Toggle brush with B, scroll to zoom, drag to pan</span>
+    </div>
+    <div id="erBox">
+      <canvas id="erCanvas"></canvas>
+      <canvas id="erMask"></canvas>
+      <canvas id="erBrush"></canvas>
+    </div>
+    <div id="brushPreview"></div>
+  </div>
+</div>
+
+<div id="exportBox">
+  <div id="exportInner">
+    <h3>EXPORTED SETTINGS</h3>
+    <p style="color:#7c98c0;font-size:11px;margin:0 0 10px">JSON below. Mask PNG downloaded separately. Send both to lock in as the production defaults.</p>
+    <textarea id="exportText" readonly></textarea>
+    <div class="actions">
+      <button id="copyBtn">Copy JSON</button>
+      <button id="closeExport" class="ghost">Close</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import * as THREE from './vendor/three.module.js';
+
+// ============================================================================
+// CONFIG — sources mirror what the production sim uses. Same URLs so the
+// preview is byte-for-byte the same data the live livestream renders.
+// ============================================================================
+const R_EARTH       = 6371000;          // metres
+const SPACE_SCALE   = 1e-5;             // metres → scene units (1 unit = 100 km)
+const R_E_SCENE     = R_EARTH * SPACE_SCALE;  // 63.71
+
+const CLOUD_SOURCES = {
+  modis:      'https://storage.googleapis.com/hail-mary-sim-textures/source/cloud_modis_median_16k.jpg',
+  bluemarble: 'assets/earth_8k_clouds.jpg',
+  threejs2k:  'https://raw.githubusercontent.com/mrdoob/three.js/r160/examples/textures/planets/earth_clouds_2048.png'
+  // gmgsi handled separately via the stitcher below
+};
+
+const EARTH_DIFFUSE = 'https://storage.googleapis.com/hail-mary-sim-textures/source/earth_16k_shallow.jpg';
+const EARTH_FALLBACK = 'assets/earth_8k.jpg';
+
+// GMGSI mosaic params — mirror of production
+const GMGSI_LAYER = 'global_visible_imagery_mosaic';
+const GMGSI_TILE_W = 4096, GMGSI_TILE_H = 2048;
+const GMGSI_GRID_COLS = 4, GMGSI_GRID_ROWS = 4;
+const GMGSI_W = GMGSI_TILE_W * GMGSI_GRID_COLS;
+const GMGSI_H = GMGSI_TILE_H * GMGSI_GRID_ROWS;
+
+// ============================================================================
+// STATUS
+// ============================================================================
+const status = document.getElementById('status');
+function statusLine(text, kind = 'ok') {
+  const cls = kind === 'err' ? 'err' : kind === 'pulse' ? '' : 'ok';
+  if (kind === 'pulse') {
+    status.innerHTML = '<span class="pulse"></span>' + text;
+  } else {
+    status.innerHTML = '<span class="' + cls + '">' + (kind === 'ok' ? '● ' : '× ') + '</span>' + text;
+  }
+}
+
+// ============================================================================
+// THREE.JS SCENE
+// ============================================================================
+const view = document.getElementById('view');
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+view.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x01030a);
+
+const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 4000);
+camera.position.set(0, 0, 80);
+camera.lookAt(0, 0, 0);
+
+function resize() {
+  const r = view.getBoundingClientRect();
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setSize(r.width, r.height, false);
+  camera.aspect = r.width / r.height;
+  camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', resize);
+resize();
+
+// Sun direction — modifiable via the sunLon slider
+const sunDir = new THREE.Vector3(1, 0.2, 0).normalize();
+const sunLight = new THREE.DirectionalLight(0xffffff, 5.2);
+sunLight.position.copy(sunDir).multiplyScalar(100);
+scene.add(sunLight);
+scene.add(new THREE.AmbientLight(0x050608, 0.015));
+
+// Stars-ish backdrop
+{
+  const sg = new THREE.BufferGeometry();
+  const n = 4000, sp = new Float32Array(n*3);
+  for (let i=0;i<n;i++){
+    const u = Math.random()*2-1, t = Math.random()*Math.PI*2;
+    const r = Math.sqrt(1-u*u);
+    sp[i*3] = r*Math.cos(t)*1000;
+    sp[i*3+1] = r*Math.sin(t)*1000;
+    sp[i*3+2] = u*1000;
+  }
+  sg.setAttribute('position', new THREE.BufferAttribute(sp, 3));
+  scene.add(new THREE.Points(sg, new THREE.PointsMaterial({ color: 0xffffff, size: 0.4, sizeAttenuation: false })));
+}
+
+// ============================================================================
+// CLOUD UNIFORMS — defaults match production r27.5
+// ============================================================================
+const uSunWorld          = { value: new THREE.Vector3(1,0,0) };
+const uCloudOpacity      = { value: 1.0 };
+const uCloudBrightness   = { value: 1.0 };
+const uCloudTint         = { value: new THREE.Vector3(1, 1, 1) };
+const uCloudAlphaLow     = { value: 0.05 };
+const uCloudAlphaHigh    = { value: 0.70 };
+const uSilverStrength    = { value: 0.95 };
+const uHgG               = { value: 0.80 };
+const uLimbAttenStart    = { value: 0.02 };
+const uLimbAttenEnd      = { value: 0.18 };
+const uSelfShadowStrength= { value: 0.40 };
+const uCloudBlur         = { value: 0.0 };
+
+// ============================================================================
+// CLOUD MATERIAL — copied VERBATIM from production cloudMat shader so what
+// you see in this lab is byte-for-byte what renders in the livestream.
+// ============================================================================
+const cloudFallback = (() => {
+  const c = document.createElement('canvas');
+  c.width = c.height = 2;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#000'; ctx.fillRect(0,0,2,2);
+  const t = new THREE.CanvasTexture(c);
+  return t;
+})();
+
+const cloudMat = new THREE.MeshStandardMaterial({
+  map: cloudFallback,
+  alphaMap: cloudFallback,
+  transparent: true,
+  depthWrite: false,
+  roughness: 1.0,
+  metalness: 0,
+  opacity: 0.78,
+  color: new THREE.Color(0xcccccc)
+});
+cloudMat.userData = {
+  uCloudOpacity, uCloudBrightness, uCloudTint, uCloudAlphaLow, uCloudAlphaHigh,
+  uSilverStrength, uHgG, uLimbAttenStart, uLimbAttenEnd, uSelfShadowStrength, uCloudBlur
+};
+
+cloudMat.onBeforeCompile = (shader) => {
+  shader.uniforms.uSunWorld           = uSunWorld;
+  shader.uniforms.uCloudOpacity       = uCloudOpacity;
+  shader.uniforms.uCloudBrightness    = uCloudBrightness;
+  shader.uniforms.uCloudTint          = uCloudTint;
+  shader.uniforms.uCloudAlphaLow      = uCloudAlphaLow;
+  shader.uniforms.uCloudAlphaHigh     = uCloudAlphaHigh;
+  shader.uniforms.uSilverStrength     = uSilverStrength;
+  shader.uniforms.uHgG                = uHgG;
+  shader.uniforms.uLimbAttenStart     = uLimbAttenStart;
+  shader.uniforms.uLimbAttenEnd       = uLimbAttenEnd;
+  shader.uniforms.uSelfShadowStrength = uSelfShadowStrength;
+  shader.uniforms.uCloudBlur          = uCloudBlur;
+
+  shader.vertexShader = shader.vertexShader.replace(
+    '#include <common>',
+    `#include <common>
+     varying vec3 vCloudWorldNormal;
+     varying vec3 vCloudWorldPos;`
+  ).replace(
+    '#include <beginnormal_vertex>',
+    `#include <beginnormal_vertex>
+     vCloudWorldNormal = normalize(mat3(modelMatrix) * normal);`
+  ).replace(
+    '#include <begin_vertex>',
+    `#include <begin_vertex>
+     vCloudWorldPos = (modelMatrix * vec4(position, 1.0)).xyz;`
+  );
+
+  shader.fragmentShader = `
+    uniform vec3  uSunWorld;
+    uniform float uCloudOpacity;
+    uniform float uCloudBrightness;
+    uniform vec3  uCloudTint;
+    uniform float uCloudAlphaLow;
+    uniform float uCloudAlphaHigh;
+    uniform float uSilverStrength;
+    uniform float uHgG;
+    uniform float uLimbAttenStart;
+    uniform float uLimbAttenEnd;
+    uniform float uSelfShadowStrength;
+    uniform float uCloudBlur;
+    varying vec3 vCloudWorldNormal;
+    varying vec3 vCloudWorldPos;
+    float hgPhase(float cosA, float g){
+      float g2 = g*g;
+      float d  = 1.0 + g2 - 2.0*g*cosA;
+      return (1.0 - g2) / (12.566 * pow(max(d, 1e-4), 1.5));
+    }
+  ` + shader.fragmentShader;
+
+  shader.fragmentShader = shader.fragmentShader.replace(
+    '#include <alphamap_fragment>',
+    `{
+       vec3 nrm = normalize(vCloudWorldNormal);
+       float a0;
+       if(uCloudBlur <= 0.001){
+         a0 = texture2D(alphaMap, vMapUv).g;
+       } else {
+         float _bs = uCloudBlur * 0.0008;
+         a0  = texture2D(alphaMap, vMapUv).g * 0.20;
+         a0 += texture2D(alphaMap, vMapUv + vec2( _bs,  0.0)).g * 0.125;
+         a0 += texture2D(alphaMap, vMapUv + vec2(-_bs,  0.0)).g * 0.125;
+         a0 += texture2D(alphaMap, vMapUv + vec2( 0.0,  _bs)).g * 0.125;
+         a0 += texture2D(alphaMap, vMapUv + vec2( 0.0, -_bs)).g * 0.125;
+         a0 += texture2D(alphaMap, vMapUv + vec2( _bs,  _bs)).g * 0.075;
+         a0 += texture2D(alphaMap, vMapUv + vec2( _bs, -_bs)).g * 0.075;
+         a0 += texture2D(alphaMap, vMapUv + vec2(-_bs,  _bs)).g * 0.075;
+         a0 += texture2D(alphaMap, vMapUv + vec2(-_bs, -_bs)).g * 0.075;
+       }
+       vec3 sunW = normalize(uSunWorld);
+       vec3 sunT = sunW - nrm * dot(sunW, nrm);
+       vec3 eastT  = normalize(cross(vec3(0.0,1.0,0.0), nrm) + vec3(1e-5,0.0,0.0));
+       vec3 northT = cross(nrm, eastT);
+       vec2 sunUV  = vec2(dot(sunT, eastT), dot(sunT, northT));
+       float shadowA = texture2D(alphaMap, vMapUv + sunUV * 0.0045).g;
+       diffuseColor.a = smoothstep(uCloudAlphaLow, uCloudAlphaHigh, a0);
+       float edge = fwidth(a0);
+       diffuseColor.a *= 1.0 - smoothstep(0.0, 0.10, edge) * 0.30;
+       vec3 cd = normalize(cameraPosition - vCloudWorldPos);
+       float vDotN = dot(nrm, cd);
+       diffuseColor.a *= smoothstep(uLimbAttenStart, uLimbAttenEnd, vDotN);
+       diffuseColor.rgb *= 1.0 - shadowA * smoothstep(0.0, 0.5, max(dot(nrm, sunW), 0.0)) * uSelfShadowStrength;
+     }`
+  );
+
+  shader.fragmentShader = shader.fragmentShader.replace(
+    '#include <dithering_fragment>',
+    `#include <dithering_fragment>
+     {
+       vec3 nrm   = normalize(vCloudWorldNormal);
+       vec3 viewW = normalize(cameraPosition - vCloudWorldPos);
+       vec3 sunW  = normalize(uSunWorld);
+       float litCloud = smoothstep(-0.05, 0.15, dot(nrm, sunW));
+       gl_FragColor.rgb *= litCloud;
+       float cosVS = -dot(sunW, viewW);
+       float phase = hgPhase(cosVS, uHgG) * 0.85 + hgPhase(cosVS, -0.20) * 0.15;
+       float a    = gl_FragColor.a;
+       float edgeMask = (1.0 - a) * smoothstep(0.02, 0.30, a);
+       float hemi = smoothstep(-0.12, 0.30, dot(nrm, sunW));
+       vec3  silver = vec3(1.00, 0.97, 0.92) * phase * edgeMask * hemi * uSilverStrength;
+       gl_FragColor.rgb += silver;
+       gl_FragColor.rgb *= uCloudBrightness * uCloudTint;
+       gl_FragColor.a   *= uCloudOpacity;
+     }`
+  );
+};
+
+// Cloud sphere — cirrus altitude (R * 1.00125 ≈ 8 km)
+const cloudSphere = new THREE.Mesh(
+  new THREE.SphereGeometry(R_E_SCENE * 1.00125, 160, 80),
+  cloudMat
+);
+cloudSphere.renderOrder = 1;
+scene.add(cloudSphere);
+
+// ============================================================================
+// EARTH — simple textured sphere so the WYSIWYG actually looks like Earth
+// ============================================================================
+const earthMat = new THREE.MeshStandardMaterial({
+  color: 0x223344,
+  roughness: 1.0,
+  metalness: 0
+});
+const earthSphere = new THREE.Mesh(
+  new THREE.SphereGeometry(R_E_SCENE, 192, 96),
+  earthMat
+);
+scene.add(earthSphere);
+
+(() => {
+  const loader = new THREE.TextureLoader();
+  loader.setCrossOrigin('anonymous');
+  function done(t){
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    earthMat.map = t;
+    earthMat.color = new THREE.Color(0xffffff);
+    earthMat.needsUpdate = true;
+  }
+  loader.load(EARTH_DIFFUSE, done, undefined,
+    () => loader.load(EARTH_FALLBACK, done, undefined,
+      () => statusLine('Earth diffuse failed — sphere will be flat grey', 'err')
+    )
+  );
+})();
+
+// ============================================================================
+// ATMOSPHERE — copied VERBATIM from production atmoMat
+// ============================================================================
+const atmoUniforms = {
+  uSunDir:           { value: sunDir.clone() },
+  uPlanetCenter:     { value: new THREE.Vector3() },
+  uPlanetRadius:     { value: R_E_SCENE },
+  uAtmoRadius:       { value: R_E_SCENE * 1.025 },
+  uAtmoSunIntensity: { value: 14.0 },
+  uAtmoRayleighBeta: { value: new THREE.Vector3(0.58, 1.35, 3.31) },
+  uAtmoMieBeta:      { value: 0.21 },
+  uAtmoMieG:         { value: 0.76 },
+  uAtmoRayleighH:    { value: 0.08 },
+  uAtmoMieH:         { value: 0.012 },
+  uAtmoAlphaMult:    { value: 1.4 },
+  uAtmoAirglow:      { value: new THREE.Vector3(0.025, 0.055, 0.040) }
+};
+
+const atmoMat = new THREE.ShaderMaterial({
+  uniforms: atmoUniforms,
+  vertexShader: `
+    varying vec3 vWorldPos;
+    void main(){
+      vec4 wp = modelMatrix * vec4(position, 1.0);
+      vWorldPos = wp.xyz;
+      gl_Position = projectionMatrix * viewMatrix * wp;
+    }`,
+  fragmentShader: `
+    varying vec3 vWorldPos;
+    uniform vec3  uSunDir;
+    uniform vec3  uPlanetCenter;
+    uniform float uPlanetRadius;
+    uniform float uAtmoRadius;
+    uniform float uAtmoSunIntensity;
+    uniform vec3  uAtmoRayleighBeta;
+    uniform float uAtmoMieBeta;
+    uniform float uAtmoMieG;
+    uniform float uAtmoRayleighH;
+    uniform float uAtmoMieH;
+    uniform float uAtmoAlphaMult;
+    uniform vec3  uAtmoAirglow;
+    const float PI = 3.14159265;
+    vec2 raySphere(vec3 ro, vec3 rd, vec3 c, float r){
+      vec3 oc = ro - c; float b = dot(oc, rd);
+      float k = dot(oc, oc) - r*r; float h = b*b - k;
+      if(h < 0.0) return vec2(1e9, -1e9);
+      h = sqrt(h); return vec2(-b - h, -b + h);
+    }
+    float densityAt(vec3 p, float H){
+      float h = length(p - uPlanetCenter) - uPlanetRadius;
+      return exp(-max(h, 0.0) / H);
+    }
+    float opticalDepth(vec3 ro, vec3 rd, float H, int steps){
+      vec2 t = raySphere(ro, rd, uPlanetCenter, uAtmoRadius);
+      if(t.y < 0.0) return 0.0;
+      float end = t.y;
+      vec2 tp = raySphere(ro, rd, uPlanetCenter, uPlanetRadius);
+      if(tp.x > 0.0 && tp.x < end) end = tp.x;
+      float dt = end / float(steps);
+      float sum = 0.0;
+      for(int i = 0; i < 16; i++){
+        if(i >= steps) break;
+        vec3 p = ro + rd * (float(i) + 0.5) * dt;
+        sum += densityAt(p, H) * dt;
+      }
+      return sum;
+    }
+    void main(){
+      vec3 ro = cameraPosition;
+      vec3 rd = normalize(vWorldPos - cameraPosition);
+      vec2 atmo = raySphere(ro, rd, uPlanetCenter, uAtmoRadius);
+      if(atmo.y < 0.0) discard;
+      vec2 planet = raySphere(ro, rd, uPlanetCenter, uPlanetRadius);
+      float tStart = max(atmo.x, 0.0);
+      float tEnd   = atmo.y;
+      if(planet.x > 0.0 && planet.x < tEnd) tEnd = planet.x;
+      if(tEnd <= tStart) discard;
+      float tPer = max(-dot(ro - uPlanetCenter, rd), 0.0);
+      float perigeeAlt = length(ro + rd * tPer - uPlanetCenter) - uPlanetRadius;
+      if(perigeeAlt > 0.4) discard;
+      vec3 sunDirN = normalize(uSunDir);
+      float mu = dot(rd, sunDirN);
+      float phaseR = (3.0 / (16.0 * PI)) * (1.0 + mu*mu);
+      float g2 = uAtmoMieG * uAtmoMieG;
+      float phaseM = (3.0 / (8.0 * PI))
+                   * ((1.0 - g2) * (1.0 + mu*mu))
+                   / ((2.0 + g2) * pow(1.0 + g2 - 2.0*uAtmoMieG*mu, 1.5));
+      const int VIEW_STEPS  = 12;
+      const int LIGHT_STEPS = 6;
+      float segLen = (tEnd - tStart) / float(VIEW_STEPS);
+      vec3 sumR = vec3(0.0); vec3 sumM = vec3(0.0);
+      float odR = 0.0; float odM = 0.0;
+      for(int i = 0; i < VIEW_STEPS; i++){
+        vec3 sp = ro + rd * (tStart + (float(i) + 0.5) * segLen);
+        float dR = densityAt(sp, uAtmoRayleighH) * segLen;
+        float dM = densityAt(sp, uAtmoMieH)      * segLen;
+        odR += dR; odM += dM;
+        vec2 ts = raySphere(sp, sunDirN, uPlanetCenter, uPlanetRadius);
+        float sunBlocked = (ts.x > 0.0 && ts.y > 0.0) ? 0.0 : 1.0;
+        float odLR = opticalDepth(sp, sunDirN, uAtmoRayleighH, LIGHT_STEPS);
+        float odLM = opticalDepth(sp, sunDirN, uAtmoMieH,      LIGHT_STEPS);
+        vec3 tau = uAtmoRayleighBeta * (odR + odLR) + vec3(uAtmoMieBeta * 1.1) * (odM + odLM);
+        vec3 atten = exp(-tau) * sunBlocked;
+        sumR += dR * atten; sumM += dM * atten;
+      }
+      vec3 color = (sumR * uAtmoRayleighBeta * phaseR + sumM * uAtmoMieBeta * phaseM) * uAtmoSunIntensity;
+      vec3 nDir = normalize(((tEnd + tStart) * 0.5 * rd + ro) - uPlanetCenter);
+      float scatterGate = smoothstep(-0.05, 0.20, dot(nDir, sunDirN));
+      color *= scatterGate;
+      float nightFac = smoothstep(-0.1, -0.6, dot(nDir, sunDirN));
+      color += uAtmoAirglow * nightFac * smoothstep(0.0, 0.15, (tEnd - tStart));
+      float alpha = clamp(max(color.r, max(color.g, color.b)) * uAtmoAlphaMult, 0.0, 1.0);
+      gl_FragColor = vec4(color, alpha);
+    }`,
+  transparent: true,
+  depthWrite: false,
+  side: THREE.FrontSide,
+  blending: THREE.AdditiveBlending
+});
+const atmoSphere = new THREE.Mesh(
+  new THREE.SphereGeometry(R_E_SCENE * 1.025, 128, 64),
+  atmoMat
+);
+atmoSphere.frustumCulled = false;
+atmoSphere.renderOrder = 5;
+scene.add(atmoSphere);
+
+// ============================================================================
+// CLOUD SOURCE LOADING + GMGSI STITCHER
+// ============================================================================
+let baseCloudCanvas = null;   // the raw stitched/loaded equirect canvas
+let baseCloudImage  = null;   // original image (for re-applying mask)
+
+async function fetchGMGSITile(col, row, hourBucket) {
+  const lonMin = -180 + col * 90;
+  const lonMax = lonMin + 90;
+  const latMax = 90 - row * 45;
+  const latMin = latMax - 45;
+  const bbox = latMin + ',' + lonMin + ',' + latMax + ',' + lonMax;
+  const url = 'https://nowcoast.noaa.gov/geoserver/satellite/wms?'
+    + 'SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap'
+    + '&LAYERS=' + GMGSI_LAYER
+    + '&CRS=EPSG:4326&BBOX=' + bbox
+    + '&WIDTH=' + GMGSI_TILE_W + '&HEIGHT=' + GMGSI_TILE_H
+    + '&FORMAT=image/png&_=' + hourBucket;
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  await new Promise((res, rej) => {
+    img.onload = res;
+    img.onerror = () => rej(new Error('tile ' + col + '/' + row + ' failed'));
+    img.src = url;
+  });
+  return img;
+}
+
+async function loadGMGSI() {
+  statusLine('GMGSI: stitching 16 tiles…', 'pulse');
+  const t0 = performance.now();
+  const hourBucket = Math.floor(Date.now() / 3600000);
+  const canvas = document.createElement('canvas');
+  canvas.width = GMGSI_W; canvas.height = GMGSI_H;
+  const ctx = canvas.getContext('2d');
+  const promises = [];
+  for (let row = 0; row < GMGSI_GRID_ROWS; row++) {
+    for (let col = 0; col < GMGSI_GRID_COLS; col++) {
+      const _col = col, _row = row;
+      promises.push(
+        fetchGMGSITile(_col, _row, hourBucket).then(img => {
+          ctx.drawImage(img, _col * GMGSI_TILE_W, _row * GMGSI_TILE_H, GMGSI_TILE_W, GMGSI_TILE_H);
+        })
+      );
+    }
+  }
+  await Promise.all(promises);
+  statusLine('GMGSI: processing alpha + seams…', 'pulse');
+  const imgData = ctx.getImageData(0, 0, GMGSI_W, GMGSI_H);
+  const px = imgData.data;
+  // Internal tile-seam no-data marker patching (production r27.3)
+  for (let row = 0; row < GMGSI_H; row++) {
+    const baseR = row * GMGSI_W * 4;
+    for (let s = 1; s < GMGSI_GRID_COLS; s++) {
+      const seamX = s * GMGSI_TILE_W;
+      const lv = px[baseR + (seamX - 3) * 4];
+      const rv = px[baseR + (seamX + 2) * 4];
+      for (let dx = -2; dx <= 2; dx++) {
+        const off = baseR + (seamX + dx) * 4;
+        const t = (dx + 2) / 4;
+        const v = Math.round(lv + (rv - lv) * t);
+        px[off] = v; px[off + 1] = v; px[off + 2] = v;
+      }
+    }
+  }
+  // Antimeridian wrap bridge
+  for (let row = 0; row < GMGSI_H; row++) {
+    const baseR = row * GMGSI_W * 4;
+    const lv = px[baseR + 8];
+    const rOff = baseR + (GMGSI_W - 1) * 4;
+    const rv = px[rOff - 8];
+    const bridge = (lv + rv) >> 1;
+    px[baseR + 0] = bridge; px[baseR + 1] = bridge; px[baseR + 2] = bridge;
+    px[baseR + 4] = lv; px[baseR + 5] = lv; px[baseR + 6] = lv;
+    px[rOff - 4] = rv; px[rOff - 3] = rv; px[rOff - 2] = rv;
+    px[rOff + 0] = bridge; px[rOff + 1] = bridge; px[rOff + 2] = bridge;
+  }
+  // Stage 1: alpha + RGB encoding (production thresholds)
+  const ALPHA_LOW = 60, ALPHA_HIGH = 195;
+  const ALPHA_RANGE = ALPHA_HIGH - ALPHA_LOW;
+  const RGB_SCALE = 0.60, RGB_FLOOR = 0.55, RGB_GAIN = 0.45;
+  const LUM_DEN = 255 - ALPHA_LOW;
+  for (let i = 0; i < px.length; i += 4) {
+    const lum = px[i];
+    let a;
+    if (lum <= ALPHA_LOW) a = 0;
+    else if (lum >= ALPHA_HIGH) a = 1;
+    else {
+      const x = (lum - ALPHA_LOW) / ALPHA_RANGE;
+      a = x * x * (3 - 2 * x);
+    }
+    const lumNorm = lum <= ALPHA_LOW ? 0 : (lum - ALPHA_LOW) / LUM_DEN;
+    const shade = (RGB_FLOOR + RGB_GAIN * lumNorm) * RGB_SCALE;
+    const c = Math.round(shade * 255);
+    px[i] = c; px[i+1] = c; px[i+2] = c;
+    px[i+3] = Math.round(a * 255);
+  }
+  ctx.putImageData(imgData, 0, 0);
+  const seconds = ((performance.now() - t0) / 1000).toFixed(1);
+  statusLine('GMGSI live — stitched in ' + seconds + 's (' + GMGSI_W + '×' + GMGSI_H + ')');
+  baseCloudCanvas = canvas;
+  applyMaskToCloud();
+}
+
+function loadStaticCloud(key) {
+  const url = CLOUD_SOURCES[key];
+  if (!url) return;
+  statusLine('Loading ' + key + '…', 'pulse');
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.onload = () => {
+    const c = document.createElement('canvas');
+    c.width = img.width; c.height = img.height;
+    c.getContext('2d').drawImage(img, 0, 0);
+    baseCloudCanvas = c;
+    baseCloudImage = img;
+    statusLine(key + ' — ' + img.width + '×' + img.height);
+    applyMaskToCloud();
+  };
+  img.onerror = () => statusLine('Failed: ' + url, 'err');
+  img.src = url;
+}
+
+function loadSource(key) {
+  if (key === 'gmgsi') loadGMGSI().catch(e => {
+    statusLine('GMGSI failed: ' + e.message + ' (falling back to MODIS)', 'err');
+    loadStaticCloud('modis');
+  });
+  else loadStaticCloud(key);
+}
+
+// ============================================================================
+// MASK BRUSH — paints on a low-res mask canvas, applied via linear-interp
+// across each row of the cloud equirect.
+// ============================================================================
+const MASK_W = 2048, MASK_H = 1024;
+const maskCanvas = document.createElement('canvas');
+maskCanvas.width = MASK_W; maskCanvas.height = MASK_H;
+const maskCtx = maskCanvas.getContext('2d');
+maskCtx.fillStyle = '#000'; maskCtx.fillRect(0,0,MASK_W,MASK_H);
+
+const erCanvas = document.getElementById('erCanvas');
+const erMask = document.getElementById('erMask');
+const erBrush = document.getElementById('erBrush');
+const erCtx = erCanvas.getContext('2d');
+const erMaskCtx = erMask.getContext('2d');
+erMask.width = MASK_W; erMask.height = MASK_H;
+
+function paintMask(x, y, size, mode) {
+  maskCtx.globalCompositeOperation = mode === 'erase' ? 'destination-out' : 'source-over';
+  maskCtx.fillStyle = '#fff';
+  maskCtx.beginPath();
+  maskCtx.arc(x, y, size, 0, Math.PI * 2);
+  maskCtx.fill();
+  // Also paint to the screen overlay with red tint
+  erMaskCtx.globalCompositeOperation = mode === 'erase' ? 'destination-out' : 'source-over';
+  erMaskCtx.fillStyle = 'rgba(255, 80, 80, 1)';
+  erMaskCtx.beginPath();
+  erMaskCtx.arc(x, y, size, 0, Math.PI * 2);
+  erMaskCtx.fill();
+}
+
+function maskCoveragePct() {
+  const data = maskCtx.getImageData(0,0,MASK_W,MASK_H).data;
+  let hit = 0;
+  for (let i = 0; i < data.length; i += 4) if (data[i] > 128) hit++;
+  return (100 * hit / (MASK_W * MASK_H));
+}
+
+function applyMaskToCloud() {
+  if (!baseCloudCanvas) return;
+  const w = baseCloudCanvas.width, h = baseCloudCanvas.height;
+  // Draw equirect into the bottom panel canvas
+  // Fit the box
+  const box = document.getElementById('erBox').getBoundingClientRect();
+  const scale = Math.min(box.width / w, box.height / h);
+  const dispW = Math.floor(w * scale), dispH = Math.floor(h * scale);
+  erCanvas.width = dispW; erCanvas.height = dispH;
+  erCanvas.style.width = dispW + 'px'; erCanvas.style.height = dispH + 'px';
+  erMask.style.width = dispW + 'px'; erMask.style.height = dispH + 'px';
+  erBrush.width = dispW; erBrush.height = dispH;
+  erBrush.style.width = dispW + 'px'; erBrush.style.height = dispH + 'px';
+  // Generate the final cloud canvas = base + mask-applied
+  const out = document.createElement('canvas');
+  out.width = w; out.height = h;
+  const outCtx = out.getContext('2d');
+  outCtx.drawImage(baseCloudCanvas, 0, 0);
+  const cov = maskCoveragePct();
+  document.getElementById('maskCov').textContent = cov.toFixed(2) + '%';
+  if (cov > 0.001) {
+    // Resample the mask up to the cloud canvas size
+    const maskFull = document.createElement('canvas');
+    maskFull.width = w; maskFull.height = h;
+    maskFull.getContext('2d').drawImage(maskCanvas, 0, 0, w, h);
+    const mData = maskFull.getContext('2d').getImageData(0,0,w,h).data;
+    const cData = outCtx.getImageData(0,0,w,h);
+    const c = cData.data;
+    // Per row, find masked spans and linearly interpolate across them
+    for (let y = 0; y < h; y++) {
+      let x = 0;
+      while (x < w) {
+        const baseR = y * w * 4;
+        if (mData[baseR + x * 4] > 128) {
+          // Span start
+          let xEnd = x;
+          while (xEnd < w && mData[baseR + xEnd * 4] > 128) xEnd++;
+          // Endpoints (clamped)
+          const lx = Math.max(0, x - 1);
+          const rx = Math.min(w - 1, xEnd);
+          const lR = c[baseR + lx * 4], lG = c[baseR + lx * 4 + 1], lB = c[baseR + lx * 4 + 2], lA = c[baseR + lx * 4 + 3];
+          const rR = c[baseR + rx * 4], rG = c[baseR + rx * 4 + 1], rB = c[baseR + rx * 4 + 2], rA = c[baseR + rx * 4 + 3];
+          for (let k = x; k < xEnd; k++) {
+            const t = (k - x + 0.5) / (xEnd - x + 1);
+            const off = baseR + k * 4;
+            c[off]     = lR + (rR - lR) * t;
+            c[off + 1] = lG + (rG - lG) * t;
+            c[off + 2] = lB + (rB - lB) * t;
+            c[off + 3] = lA + (rA - lA) * t;
+          }
+          x = xEnd;
+        } else x++;
+      }
+    }
+    outCtx.putImageData(cData, 0, 0);
+  }
+  // Draw downsampled preview to the bottom panel
+  erCtx.imageSmoothingQuality = 'high';
+  erCtx.drawImage(out, 0, 0, dispW, dispH);
+  // Promote `out` to a THREE texture and wire to the cloud sphere
+  const tex = new THREE.CanvasTexture(out);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  if (cloudMat.map) cloudMat.map.dispose && cloudMat.map.dispose();
+  cloudMat.map = tex; cloudMat.alphaMap = tex; cloudMat.bumpMap = tex;
+  cloudMat.bumpScale = parseFloat(document.getElementById('u_bump').value);
+  cloudMat.needsUpdate = true;
+  // Equirect dimensions label
+  document.getElementById('erDims').textContent = '  ' + w + '×' + h;
+}
+
+// ============================================================================
+// BRUSH INTERACTION on the bottom panel
+// ============================================================================
+let brushDown = false;
+const brushPreview = document.getElementById('brushPreview');
+
+function getMaskCoords(e) {
+  const r = erBrush.getBoundingClientRect();
+  const x = (e.clientX - r.left) / r.width  * MASK_W;
+  const y = (e.clientY - r.top)  / r.height * MASK_H;
+  return { x, y };
+}
+function showBrushPreview(e) {
+  if (!document.getElementById('brushOn').checked) {
+    brushPreview.style.display = 'none';
+    return;
+  }
+  const size = parseFloat(document.getElementById('brushSize').value);
+  const r = erBrush.getBoundingClientRect();
+  const visSize = size * r.width / MASK_W * 2;
+  brushPreview.style.display = 'block';
+  brushPreview.style.left = (e.clientX - visSize/2) + 'px';
+  brushPreview.style.top  = (e.clientY - visSize/2) + 'px';
+  brushPreview.style.width = visSize + 'px';
+  brushPreview.style.height = visSize + 'px';
+}
+erBrush.addEventListener('mousedown', e => {
+  if (!document.getElementById('brushOn').checked) return;
+  brushDown = true;
+  const { x, y } = getMaskCoords(e);
+  const size = parseFloat(document.getElementById('brushSize').value);
+  const mode = document.getElementById('brushMode').value;
+  paintMask(x, y, size, mode);
+  document.getElementById('maskCov').textContent = maskCoveragePct().toFixed(2) + '%';
+});
+erBrush.addEventListener('mousemove', e => {
+  showBrushPreview(e);
+  if (!brushDown) return;
+  const { x, y } = getMaskCoords(e);
+  const size = parseFloat(document.getElementById('brushSize').value);
+  const mode = document.getElementById('brushMode').value;
+  paintMask(x, y, size, mode);
+});
+window.addEventListener('mouseup', () => { brushDown = false; });
+erBrush.addEventListener('mouseleave', () => { brushPreview.style.display = 'none'; });
+document.addEventListener('keydown', e => {
+  if (e.key === 'b' || e.key === 'B') {
+    if (document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA')) return;
+    const cb = document.getElementById('brushOn');
+    cb.checked = !cb.checked;
+    erBrush.style.pointerEvents = cb.checked ? 'auto' : 'none';
+    statusLine('Brush ' + (cb.checked ? 'ON' : 'OFF'));
+  }
+});
+document.getElementById('brushOn').addEventListener('change', e => {
+  erBrush.style.pointerEvents = e.target.checked ? 'auto' : 'none';
+});
+erBrush.style.pointerEvents = 'none';
+
+document.getElementById('maskClear').onclick = () => {
+  maskCtx.clearRect(0,0,MASK_W,MASK_H);
+  maskCtx.fillStyle = '#000'; maskCtx.fillRect(0,0,MASK_W,MASK_H);
+  erMaskCtx.clearRect(0,0,MASK_W,MASK_H);
+  document.getElementById('maskCov').textContent = '0.00%';
+  applyMaskToCloud();
+};
+document.getElementById('maskApply').onclick = applyMaskToCloud;
+
+// ============================================================================
+// CAMERA — orbit drag + scroll zoom (no OrbitControls dependency)
+// ============================================================================
+const orbit = { yaw: 0, pitch: 0.15, dist: 80, dragging: false, lx: 0, ly: 0 };
+view.addEventListener('mousedown', e => {
+  orbit.dragging = true; orbit.lx = e.clientX; orbit.ly = e.clientY;
+});
+window.addEventListener('mouseup', () => orbit.dragging = false);
+window.addEventListener('mousemove', e => {
+  if (!orbit.dragging) return;
+  const dx = e.clientX - orbit.lx, dy = e.clientY - orbit.ly;
+  orbit.yaw   -= dx * 0.005;
+  orbit.pitch += dy * 0.005;
+  orbit.pitch = Math.max(-1.4, Math.min(1.4, orbit.pitch));
+  orbit.lx = e.clientX; orbit.ly = e.clientY;
+});
+view.addEventListener('wheel', e => {
+  orbit.dist *= 1 + e.deltaY * 0.001;
+  orbit.dist = Math.max(R_E_SCENE * 1.03, Math.min(300, orbit.dist));
+  document.getElementById('camDist').value = orbit.dist.toFixed(0);
+  document.getElementById('camDistV').textContent = orbit.dist.toFixed(0);
+}, { passive: true });
+
+// ============================================================================
+// SLIDER WIRING
+// ============================================================================
+function wire(id, apply) {
+  const el = document.getElementById(id);
+  const lv = document.getElementById(id + 'V');
+  if (!el) return;
+  el.addEventListener('input', () => {
+    const v = parseFloat(el.value);
+    if (lv) lv.textContent = Math.abs(v) < 10 ? v.toFixed(2) : v.toFixed(0);
+    apply(v);
+  });
+}
+wire('u_opacity', v => uCloudOpacity.value = v);
+wire('u_bright',  v => uCloudBrightness.value = v);
+wire('u_tintR',   v => uCloudTint.value.x = v);
+wire('u_tintG',   v => uCloudTint.value.y = v);
+wire('u_tintB',   v => uCloudTint.value.z = v);
+wire('u_aLow',    v => uCloudAlphaLow.value = v);
+wire('u_aHigh',   v => uCloudAlphaHigh.value = v);
+wire('u_silver',  v => uSilverStrength.value = v);
+wire('u_hg',      v => uHgG.value = v);
+wire('u_limbS',   v => uLimbAttenStart.value = v);
+wire('u_limbE',   v => uLimbAttenEnd.value = v);
+wire('u_self',    v => uSelfShadowStrength.value = v);
+wire('u_matOp',   v => { cloudMat.opacity = v; });
+wire('u_bump',    v => { cloudMat.bumpScale = v; });
+wire('a_sun',     v => atmoUniforms.uAtmoSunIntensity.value = v);
+wire('a_rR',      v => atmoUniforms.uAtmoRayleighBeta.value.x = v);
+wire('a_rG',      v => atmoUniforms.uAtmoRayleighBeta.value.y = v);
+wire('a_rB',      v => atmoUniforms.uAtmoRayleighBeta.value.z = v);
+wire('a_mB',      v => atmoUniforms.uAtmoMieBeta.value = v);
+wire('a_mG',      v => atmoUniforms.uAtmoMieG.value = v);
+wire('a_rH',      v => { atmoUniforms.uAtmoRayleighH.value = v;
+  document.getElementById('a_rHV').textContent = v.toFixed(3); });
+wire('a_mH',      v => { atmoUniforms.uAtmoMieH.value = v;
+  document.getElementById('a_mHV').textContent = v.toFixed(3); });
+wire('a_alpha',   v => atmoUniforms.uAtmoAlphaMult.value = v);
+wire('camDist',   v => orbit.dist = v);
+wire('sunLon',    v => {
+  const lon = v * Math.PI / 180;
+  sunDir.set(Math.cos(lon), 0.15, Math.sin(lon)).normalize();
+  sunLight.position.copy(sunDir).multiplyScalar(100);
+  atmoUniforms.uSunDir.value.copy(sunDir);
+  uSunWorld.value.copy(sunDir);
+});
+wire('brushSize', v => {});
+
+document.getElementById('srcSel').addEventListener('change', e => loadSource(e.target.value));
+document.getElementById('reloadBtn').onclick = () => loadSource(document.getElementById('srcSel').value);
+
+// ============================================================================
+// EXPORT
+// ============================================================================
+function buildExport() {
+  return {
+    meta: {
+      tool: 'cloud-lab.html',
+      exportedAt: new Date().toISOString(),
+      source: document.getElementById('srcSel').value,
+      maskCoveragePct: +maskCoveragePct().toFixed(3)
+    },
+    clouds: {
+      opacity:           +uCloudOpacity.value.toFixed(3),
+      brightness:        +uCloudBrightness.value.toFixed(3),
+      tint:              [+uCloudTint.value.x.toFixed(3), +uCloudTint.value.y.toFixed(3), +uCloudTint.value.z.toFixed(3)],
+      alphaLow:          +uCloudAlphaLow.value.toFixed(4),
+      alphaHigh:         +uCloudAlphaHigh.value.toFixed(4),
+      silverStrength:    +uSilverStrength.value.toFixed(3),
+      hgAnisotropy:      +uHgG.value.toFixed(3),
+      limbAttenStart:    +uLimbAttenStart.value.toFixed(4),
+      limbAttenEnd:      +uLimbAttenEnd.value.toFixed(4),
+      selfShadow:        +uSelfShadowStrength.value.toFixed(3),
+      cloudBlur:         +uCloudBlur.value.toFixed(3),
+      materialOpacity:   +cloudMat.opacity.toFixed(3),
+      bumpScale:         +cloudMat.bumpScale.toFixed(4)
+    },
+    atmosphere: {
+      sunIntensity:  +atmoUniforms.uAtmoSunIntensity.value.toFixed(3),
+      rayleighBeta:  [+atmoUniforms.uAtmoRayleighBeta.value.x.toFixed(3), +atmoUniforms.uAtmoRayleighBeta.value.y.toFixed(3), +atmoUniforms.uAtmoRayleighBeta.value.z.toFixed(3)],
+      mieBeta:       +atmoUniforms.uAtmoMieBeta.value.toFixed(4),
+      mieAnisotropy: +atmoUniforms.uAtmoMieG.value.toFixed(3),
+      rayleighH:     +atmoUniforms.uAtmoRayleighH.value.toFixed(4),
+      mieH:          +atmoUniforms.uAtmoMieH.value.toFixed(4),
+      alphaMult:     +atmoUniforms.uAtmoAlphaMult.value.toFixed(3),
+      airglow:       [+atmoUniforms.uAtmoAirglow.value.x.toFixed(4), +atmoUniforms.uAtmoAirglow.value.y.toFixed(4), +atmoUniforms.uAtmoAirglow.value.z.toFixed(4)]
+    }
+  };
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+document.getElementById('exportBtn').onclick = () => {
+  const json = JSON.stringify(buildExport(), null, 2);
+  document.getElementById('exportText').value = json;
+  document.getElementById('exportBox').classList.add('on');
+  // Also auto-download the mask PNG
+  maskCanvas.toBlob(b => {
+    if (b) downloadBlob(b, 'cloud-mask-' + Date.now() + '.png');
+  }, 'image/png');
+};
+document.getElementById('dlMask').onclick = () => {
+  maskCanvas.toBlob(b => {
+    if (b) downloadBlob(b, 'cloud-mask-' + Date.now() + '.png');
+  }, 'image/png');
+};
+document.getElementById('copyBtn').onclick = async () => {
+  try { await navigator.clipboard.writeText(document.getElementById('exportText').value);
+    const b = document.getElementById('copyBtn'); const t = b.textContent;
+    b.textContent = 'Copied!'; setTimeout(() => b.textContent = t, 1400);
+  } catch(_) {}
+};
+document.getElementById('closeExport').onclick = () => document.getElementById('exportBox').classList.remove('on');
+
+// ============================================================================
+// RENDER LOOP
+// ============================================================================
+function frame() {
+  const cy = Math.cos(orbit.yaw), sy = Math.sin(orbit.yaw);
+  const cp = Math.cos(orbit.pitch), sp = Math.sin(orbit.pitch);
+  camera.position.set(
+    orbit.dist * cp * sy,
+    orbit.dist * sp,
+    orbit.dist * cp * cy
+  );
+  camera.lookAt(0, 0, 0);
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+frame();
+
+// Initial source load
+loadSource('gmgsi');
+
+// Resize equirect on window resize
+window.addEventListener('resize', () => {
+  setTimeout(applyMaskToCloud, 100);
+});
+
+</script>
+</body>
+</html>
