@@ -1,0 +1,108 @@
+# MARSSHINE max-quality COLOR bake on GCP Cloud Build.
+# Source: USGS Viking MDIM21 232m global color mosaic (11.86 GB GeoTIFF,
+#         native ~92160 x 46080, the highest-res GLOBAL COLOR map of Mars).
+# Output: 6 x 8192² cube faces -> gs://.../mars_viking_cube_8k/
+#         Effective ~32K equirect at the close-range camera, no polar smear,
+#         no crater pixelation.
+#
+# Pipeline:
+#   1. gdal downloads + windowed-reads the 11.86 GB TIF and writes a 32768x16384
+#      equirect JPG (gdal streams, low RAM, never decodes the whole 12 GB raster).
+#   2. PIL projects that 32K equirect -> 6 x 8192² cube faces (bilinear).
+#   3. gsutil uploads the 6 faces.
+#
+# 32K intermediate is required so the 8K cube faces (91 px/deg) sample REAL
+# detail, not upscaled mush: 32768/360 = 91 px/deg matches the face density.
+#
+# DO NOT run locally. 12 GB download + GDAL + 32K PIL needs >8 GB RAM = M2 OOM.
+#
+# Submit:
+#   cd ops/viking_cube_gcp
+#   gcloud builds submit --config=cloudbuild.yaml --async .
+
+steps:
+  - name: 'ghcr.io/osgeo/gdal:ubuntu-small-3.8.5'
+    id: download-and-equirect
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        apt-get update -qq && apt-get install -y -qq curl python3-pip >/dev/null
+        echo "[1/2] Downloading Viking MDIM21 232m color (11.86 GB)..."
+        curl -fsSL --retry 3 --retry-delay 5 \
+          -o /workspace/viking.tif \
+          https://planetarymaps.usgs.gov/mosaic/Mars_Viking_MDIM21_ClrMosaic_global_232m.tif
+        ls -lh /workspace/viking.tif
+        gdalinfo /workspace/viking.tif | head -20
+        echo "[2/2] Resampling -> 32768x16384 equirect JPG..."
+        gdal_translate -of JPEG -outsize 32768 16384 -r bilinear \
+          -co QUALITY=95 \
+          /workspace/viking.tif /workspace/viking_32k.jpg
+        ls -lh /workspace/viking_32k.jpg
+
+  - name: 'python:3.11-slim'
+    id: project-cube
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        pip install --quiet --no-cache-dir pillow numpy
+        cat > /workspace/cube.py <<'PYEOF'
+        import math, time, os
+        from multiprocessing import Pool
+        from PIL import Image
+        import numpy as np
+        Image.MAX_IMAGE_PIXELS = None
+        FACE = 8192
+        SRC = '/workspace/viking_32k.jpg'
+        OUT = '/workspace/mars_viking_cube'
+        FACES = {
+          'px': lambda u,v:( np.ones_like(u), -v, -u),
+          'nx': lambda u,v:(-np.ones_like(u), -v,  u),
+          'py': lambda u,v:( u,  np.ones_like(u),  v),
+          'ny': lambda u,v:( u, -np.ones_like(u), -v),
+          'pz': lambda u,v:( u, -v,  np.ones_like(u)),
+          'nz': lambda u,v:(-u, -v, -np.ones_like(u)),
+        }
+        def do(face):
+          out=f"{OUT}_{face}.jpg"
+          if os.path.exists(out): return f"skip {out}"
+          t0=time.time()
+          img=Image.open(SRC).convert('RGB'); src=np.asarray(img,dtype=np.uint8); W,H=img.size
+          c=(np.arange(FACE,dtype=np.float32)+0.5)/FACE*2-1
+          uu,vv=np.meshgrid(c,c)
+          x,y,z=FACES[face](uu,vv); n=np.sqrt(x*x+y*y+z*z); x/=n; y/=n; z/=n
+          lon=np.arctan2(z,x); lat=np.arcsin(np.clip(y,-1,1))
+          ue=(lon+math.pi)/(2*math.pi)*W; ve=(math.pi/2-lat)/math.pi*H
+          x0=np.clip(np.floor(ue).astype(np.int32),0,W-1); x1=(x0+1)%W
+          y0=np.clip(np.floor(ve).astype(np.int32),0,H-1); y1=np.clip(y0+1,0,H-1)
+          fx=(ue-x0)[...,None].astype(np.float32); fy=(ve-y0)[...,None].astype(np.float32)
+          c00=src[y0,x0].astype(np.float32); c10=src[y0,x1].astype(np.float32)
+          c01=src[y1,x0].astype(np.float32); c11=src[y1,x1].astype(np.float32)
+          top=c00*(1-fx)+c10*fx; bot=c01*(1-fx)+c11*fx; o=top*(1-fy)+bot*fy
+          Image.fromarray(np.clip(o,0,255).astype(np.uint8),'RGB').save(out,quality=92,optimize=True)
+          return f"{out} [{time.time()-t0:.1f}s]"
+        if __name__=='__main__':
+          t0=time.time()
+          with Pool(6) as p:
+            for m in p.imap_unordered(do,list(FACES.keys())): print(m,flush=True)
+          print(f"total {time.time()-t0:.1f}s")
+        PYEOF
+        python /workspace/cube.py
+        ls -lh /workspace/mars_viking_cube_*.jpg
+
+  - name: 'gcr.io/cloud-builders/gsutil'
+    id: upload
+    args: ['-m','-h','Cache-Control:public, max-age=2592000, immutable','cp',
+      '/workspace/mars_viking_cube_px.jpg','/workspace/mars_viking_cube_nx.jpg',
+      '/workspace/mars_viking_cube_py.jpg','/workspace/mars_viking_cube_ny.jpg',
+      '/workspace/mars_viking_cube_pz.jpg','/workspace/mars_viking_cube_nz.jpg',
+      'gs://hail-mary-sim-textures/mars_viking_cube_8k/']
+
+timeout: '3600s'
+options:
+  machineType: E2_HIGHCPU_32
+  diskSizeGb: 100
+  logging: CLOUD_LOGGING_ONLY

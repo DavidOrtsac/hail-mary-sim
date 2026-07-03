@@ -1,0 +1,72 @@
+# MARSSHINE PBR map bake: the two maps Earth's planet material has and the
+# MARSSHINE fork dropped — a tangent-space NORMAL map (real relief shading, fixes
+# the "flat") and a ROUGHNESS map (spatial micro-roughness, fixes the uniform
+# "plastic" sheen). Together with roughness=1.0 they de-plastic the surface.
+#
+# Source: the already-baked 16K MOLA/HRSC heightmap on GCS (6.4 MB, 8-bit). We
+# gaussian-deburr it first so differentiating 8-bit steps doesn't terrace. Fast:
+# no 10.60 GB DEM re-download. If the 16K relief reads too soft at the 60 km skim
+# we can re-bake normals from the native 200m DEM later (same pipeline, +download).
+#
+# Outputs:
+#   gs://hail-mary-sim-textures/source/mars_normal_16k.jpg  (16384x8192 RGB, 4:4:4)
+#   gs://hail-mary-sim-textures/source/mars_rough_4k.jpg    (4096x2048 grayscale)
+#
+# Submit:  cd ops/normalmap_gcp && gcloud builds submit --config=cloudbuild.yaml --async .
+
+steps:
+  - name: 'python:3.11-slim'
+    id: bake-maps
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        apt-get update -qq && apt-get install -y -qq curl >/dev/null
+        pip install --quiet --no-cache-dir pillow numpy
+        echo "[1/2] Fetching 16K heightmap..."
+        curl -fsSL -o /workspace/h.jpg \
+          https://storage.googleapis.com/hail-mary-sim-textures/source/mars_height_16k.jpg
+        ls -lh /workspace/h.jpg
+        echo "[2/2] Baking normal + roughness maps..."
+        python3 - <<'PY'
+        import numpy as np
+        from PIL import Image, ImageFilter
+        Image.MAX_IMAGE_PIXELS = None
+        im = Image.open('/workspace/h.jpg').convert('L').filter(ImageFilter.GaussianBlur(1.2))
+        h = np.asarray(im, dtype=np.float32) / 255.0
+        H, W = h.shape
+        # Longitude (x) wraps on an equirect; latitude (y) is edge-clamped.
+        gx = (np.roll(h, -1, axis=1) - np.roll(h, 1, axis=1)) * 0.5
+        gy = np.empty_like(h)
+        gy[1:-1] = (h[2:] - h[:-2]) * 0.5; gy[0] = h[1]-h[0]; gy[-1] = h[-1]-h[-2]
+        # Tangent-space normal map (OpenGL convention: +Y up). STRENGTH just sets the
+        # baked gradient gain; final intensity is tuned at runtime via normalScale.
+        STRENGTH = 6.0
+        nx = -gx*STRENGTH; ny = -gy*STRENGTH; nz = np.ones_like(h)
+        L = np.sqrt(nx*nx + ny*ny + nz*nz); nx/=L; ny/=L; nz/=L
+        rgb = np.stack([nx*0.5+0.5, ny*0.5+0.5, nz*0.5+0.5], axis=-1)
+        Image.fromarray((rgb*255).clip(0,255).astype('uint8'), 'RGB').save(
+            '/workspace/mars_normal_16k.jpg', quality=95, subsampling=0)  # 4:4:4, no chroma loss
+        # Roughness map: matte EVERYWHERE (0.86..1.0), just rougher where steeper, so
+        # the surface stops reading as one uniform glossy ball. 4K is plenty for this.
+        slope = np.sqrt(gx*gx + gy*gy)
+        sn = np.clip(slope / (np.percentile(slope, 95) + 1e-6), 0, 1)
+        rough = 0.86 + 0.14*sn
+        Image.fromarray((rough*255).clip(0,255).astype('uint8'), 'L').resize(
+            (4096, 2048), Image.BILINEAR).save('/workspace/mars_rough_4k.jpg', quality=92)
+        print('baked normal(%dx%d) + rough(4096x2048)' % (W, H))
+        PY
+        ls -lh /workspace/mars_normal_16k.jpg /workspace/mars_rough_4k.jpg
+
+  - name: 'gcr.io/cloud-builders/gsutil'
+    id: upload
+    args: ['-m','-h','Cache-Control:public, max-age=2592000, immutable','cp',
+      '/workspace/mars_normal_16k.jpg','/workspace/mars_rough_4k.jpg',
+      'gs://hail-mary-sim-textures/source/']
+
+timeout: '1800s'
+options:
+  machineType: E2_HIGHCPU_32
+  diskSizeGb: 30
+  logging: CLOUD_LOGGING_ONLY

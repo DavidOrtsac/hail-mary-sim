@@ -1,0 +1,47 @@
+# MARSSHINE cube-face bake on GCP Cloud Build.
+# Runs on E2_HIGHCPU_32 (32 vCPU / 32 GB RAM) -- approx $0.40 per run.
+# DO NOT run the local bake.py on the 8 GB Mac Mini, it OOM-crashes the system.
+#
+# Submit:
+#   cd ops/cube_bake_gcp
+#   gcloud builds submit --config=cloudbuild.yaml .
+steps:
+  - name: 'gcr.io/cloud-builders/gsutil'
+    id: download-source
+    args:
+      - cp
+      - gs://hail-mary-sim-textures/source/mars_8k.jpg
+      - /workspace/mars_8k.jpg
+
+  - name: 'python:3.11-slim'
+    id: bake
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        pip install --quiet --no-cache-dir pillow numpy
+        cd /workspace
+        python bake.py
+        ls -lh /workspace/mars_cube_*.jpg
+
+  - name: 'gcr.io/cloud-builders/gsutil'
+    id: upload-faces
+    args:
+      - -m
+      - -h
+      - 'Cache-Control:public, max-age=2592000, immutable'
+      - cp
+      - /workspace/mars_cube_px.jpg
+      - /workspace/mars_cube_nx.jpg
+      - /workspace/mars_cube_py.jpg
+      - /workspace/mars_cube_ny.jpg
+      - /workspace/mars_cube_pz.jpg
+      - /workspace/mars_cube_nz.jpg
+      - gs://hail-mary-sim-textures/mars_cube_4k/
+
+timeout: '1800s'
+
+options:
+  machineType: E2_HIGHCPU_32
+  logging: CLOUD_LOGGING_ONLY

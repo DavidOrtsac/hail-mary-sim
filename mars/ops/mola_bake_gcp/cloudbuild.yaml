@@ -1,0 +1,63 @@
+# MARSSHINE MOLA heightmap bake on GCP Cloud Build.
+# Downloads the real USGS Astropedia MOLA DEM (2.0 GB GeoTIFF, 128 ppd / 463 m
+# pixel size, simple-cylindrical -180..+180 / -90..+90) and resamples it to an
+# 8K (8192 x 4096) grayscale JPG suitable as a Three.js bumpMap.
+#
+# Elevation range is clamped to Mars's true relief envelope:
+#   -8,200 m (Hellas basin floor)  -> 0   (black)
+#   +21,229 m (Olympus Mons summit) -> 255 (white)
+# Total ~30 km relief packed into 256 grayscale levels = ~117 m per gray step,
+# which is well below the visible detail at 400 km orbit altitude (~1 pixel per
+# 50 m), so banding will not be visible in the sim.
+#
+# DO NOT run locally. 2 GB download + GDAL TIF load + resample needs >4 GB RAM
+# which OOM-crashes the 8 GB Mac Mini.
+#
+# Submit:
+#   cd ops/mola_bake_gcp
+#   gcloud builds submit --config=cloudbuild.yaml --async .
+
+steps:
+  - name: 'ghcr.io/osgeo/gdal:ubuntu-small-3.8.5'
+    id: download-and-bake
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        echo "[1/3] Downloading MOLA DEM (2.0 GB) from USGS Astropedia..."
+        apt-get update -qq && apt-get install -y -qq curl >/dev/null
+        curl -fsSL --retry 3 --retry-delay 5 \
+          -o /workspace/mola_dem.tif \
+          https://planetarymaps.usgs.gov/mosaic/Mars_MGS_MOLA_DEM_mosaic_global_463m.tif
+        ls -lh /workspace/mola_dem.tif
+        echo "[2/3] Inspecting source TIF..."
+        gdalinfo /workspace/mola_dem.tif | head -25
+        echo "[3/3] Resampling 46080x23040 -> 8192x4096 grayscale JPG..."
+        gdal_translate \
+          -of JPEG \
+          -outsize 8192 4096 \
+          -ot Byte \
+          -scale -8200 21229 0 255 \
+          -r bilinear \
+          -co QUALITY=92 \
+          /workspace/mola_dem.tif \
+          /workspace/mars_height_8k.jpg
+        ls -lh /workspace/mars_height_8k.jpg
+
+  - name: 'gcr.io/cloud-builders/gsutil'
+    id: upload-heightmap
+    args:
+      - -m
+      - -h
+      - 'Cache-Control:public, max-age=2592000, immutable'
+      - cp
+      - /workspace/mars_height_8k.jpg
+      - gs://hail-mary-sim-textures/source/mars_height_8k.jpg
+
+timeout: '3600s'
+
+options:
+  machineType: E2_HIGHCPU_32
+  diskSizeGb: 50
+  logging: CLOUD_LOGGING_ONLY

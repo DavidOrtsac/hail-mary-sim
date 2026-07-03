@@ -1,0 +1,46 @@
+# MARSSHINE max-quality HEIGHTMAP bake on GCP Cloud Build.
+# Source: USGS HRSC/MOLA blended DEM 200m (10.60 GB GeoTIFF, 106694 x 53347,
+#         16-bit, blends MOLA 463m base with HRSC ~50m where available, 44%
+#         of Mars at true HRSC detail). Higher-res than the MOLA-only 463m DEM.
+# Output: 16384 x 8192 grayscale JPG -> gs://.../source/mars_height_16k.jpg
+#         Elevation -8200..+21229 m -> 0..255 (same scale as the 8K bake so
+#         the existing displacementScale math is unchanged).
+#
+# DO NOT run locally. 5.79 GB download + GDAL on a 100K-wide raster = M2 OOM.
+#
+# Submit:
+#   cd ops/height16k_gcp
+#   gcloud builds submit --config=cloudbuild.yaml --async .
+
+steps:
+  - name: 'ghcr.io/osgeo/gdal:ubuntu-small-3.8.5'
+    id: download-and-bake
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        apt-get update -qq && apt-get install -y -qq curl >/dev/null
+        echo "[1/2] Downloading HRSC/MOLA 200m DEM (10.60 GB)..."
+        curl -fsSL --retry 3 --retry-delay 5 \
+          -o /workspace/dem.tif \
+          https://planetarymaps.usgs.gov/mosaic/Mars/HRSC_MOLA_Blend/Mars_HRSC_MOLA_BlendDEM_Global_200mp_v2.tif
+        ls -lh /workspace/dem.tif
+        gdalinfo /workspace/dem.tif | head -25
+        echo "[2/2] Resampling 106694x53347 -> 16384x8192 grayscale JPG..."
+        gdal_translate -of JPEG -outsize 16384 8192 -ot Byte \
+          -scale -8200 21229 0 255 -r bilinear -co QUALITY=95 \
+          /workspace/dem.tif /workspace/mars_height_16k.jpg
+        ls -lh /workspace/mars_height_16k.jpg
+
+  - name: 'gcr.io/cloud-builders/gsutil'
+    id: upload
+    args: ['-m','-h','Cache-Control:public, max-age=2592000, immutable','cp',
+      '/workspace/mars_height_16k.jpg',
+      'gs://hail-mary-sim-textures/source/mars_height_16k.jpg']
+
+timeout: '3600s'
+options:
+  machineType: E2_HIGHCPU_32
+  diskSizeGb: 80
+  logging: CLOUD_LOGGING_ONLY
