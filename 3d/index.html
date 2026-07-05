@@ -3403,7 +3403,7 @@ function initPostFX(){
       uCA:      { value: 0.0014 },   // chromatic aberration — toned from 0.0022 (real corrected lenses ~0.001)
       uVignette:{ value: 0.42 },     // vignette — softer (was 0.55)
       uDirt:    { value: 0.10 },     // dust — half strength (was 0.18); no more sparkle specks
-      uGrain:   { value: 0.024 },    // grain — more subtle (was 0.035)
+      uGrain:   { value: 0.0 },      // r27.23: grain OFF by default (user: no film grain, ever)
       uDither:  { value: 0.0 },      // 8-bit anti-banding dither (0 = off, 1 = on). OFF by default.
     },
     vertexShader: `
@@ -3527,7 +3527,7 @@ function initPostFX(){
       uGain:        { value: new THREE.Vector3(1, 1, 1) },
       uBlackPoint:  { value: 0.0 },
       uWhitePoint:  { value: 1.0 },
-      uGrain:       { value: 0.03 },       // r22: default grain 0.03 (subtle film texture from frame 1)
+      uGrain:       { value: 0.0 },        // r27.23: grain OFF by default everywhere (user request; sliders can re-add)
       uVignette:    { value: 0.0 },        // r19: vignette darkening 0-1
       uTime:        { value: 0.0 }         // animates grain frame-to-frame
     },
@@ -3605,13 +3605,13 @@ function initPostFX(){
     // r22: every preset now ships an explicit grain value (default 0.03 —
     // subtle photographic film texture, matches what most ISS/EPIC press
     // releases get after Lightroom). Set 0.0 if you want zero noise.
-    neutral:        { name: 'Neutral',           exposure: 1.00, saturation: 1.00, contrast: 1.00, vibrance: 0.00, temperature: 0.00, gain: [1.00, 1.00, 1.00], blackPoint: 0.00, whitePoint: 1.00, grain: 0.03 },
-    iss_idealized:  { name: 'ISS Idealized',     exposure: 1.00, saturation: 1.45, contrast: 1.15, vibrance: 0.25, temperature:-0.08, gain: [0.96, 1.00, 1.08], blackPoint: 0.02, whitePoint: 0.98, grain: 0.03 },
-    nasa_press:     { name: 'NASA Press',        exposure: 1.05, saturation: 1.20, contrast: 1.10, vibrance: 0.15, temperature: 0.00, gain: [1.02, 1.00, 1.02], blackPoint: 0.01, whitePoint: 0.99, grain: 0.03 },
-    cinematic:      { name: 'Cinematic Teal',    exposure: 0.95, saturation: 1.10, contrast: 1.25, vibrance: 0.10, temperature:-0.15, gain: [0.92, 1.02, 1.12], blackPoint: 0.05, whitePoint: 0.95, grain: 0.04 },
-    vivid:          { name: 'Vivid Documentary', exposure: 1.10, saturation: 1.70, contrast: 1.20, vibrance: 0.40, temperature:-0.05, gain: [1.00, 1.05, 1.05], blackPoint: 0.00, whitePoint: 0.95, grain: 0.02 },
-    warm_film:      { name: 'Warm Film',         exposure: 1.00, saturation: 1.30, contrast: 1.10, vibrance: 0.20, temperature: 0.15, gain: [1.08, 1.00, 0.92], blackPoint: 0.03, whitePoint: 1.00, grain: 0.05 },
-    bw_documentary: { name: 'B&W Documentary',   exposure: 1.05, saturation: 0.00, contrast: 1.35, vibrance: 0.00, temperature: 0.00, gain: [1.00, 1.00, 1.00], blackPoint: 0.04, whitePoint: 0.96, grain: 0.06 }
+    neutral:        { name: 'Neutral',           exposure: 1.00, saturation: 1.00, contrast: 1.00, vibrance: 0.00, temperature: 0.00, gain: [1.00, 1.00, 1.00], blackPoint: 0.00, whitePoint: 1.00, grain: 0.00 },
+    iss_idealized:  { name: 'ISS Idealized',     exposure: 1.00, saturation: 1.45, contrast: 1.15, vibrance: 0.25, temperature:-0.08, gain: [0.96, 1.00, 1.08], blackPoint: 0.02, whitePoint: 0.98, grain: 0.00 },
+    nasa_press:     { name: 'NASA Press',        exposure: 1.05, saturation: 1.20, contrast: 1.10, vibrance: 0.15, temperature: 0.00, gain: [1.02, 1.00, 1.02], blackPoint: 0.01, whitePoint: 0.99, grain: 0.00 },
+    cinematic:      { name: 'Cinematic Teal',    exposure: 0.95, saturation: 1.10, contrast: 1.25, vibrance: 0.10, temperature:-0.15, gain: [0.92, 1.02, 1.12], blackPoint: 0.05, whitePoint: 0.95, grain: 0.00 },
+    vivid:          { name: 'Vivid Documentary', exposure: 1.10, saturation: 1.70, contrast: 1.20, vibrance: 0.40, temperature:-0.05, gain: [1.00, 1.05, 1.05], blackPoint: 0.00, whitePoint: 0.95, grain: 0.00 },
+    warm_film:      { name: 'Warm Film',         exposure: 1.00, saturation: 1.30, contrast: 1.10, vibrance: 0.20, temperature: 0.15, gain: [1.08, 1.00, 0.92], blackPoint: 0.03, whitePoint: 1.00, grain: 0.00 },
+    bw_documentary: { name: 'B&W Documentary',   exposure: 1.05, saturation: 0.00, contrast: 1.35, vibrance: 0.00, temperature: 0.00, gain: [1.00, 1.00, 1.00], blackPoint: 0.04, whitePoint: 0.96, grain: 0.00 }
   };
   post.FILTER_PRESETS = FILTER_PRESETS;
 
