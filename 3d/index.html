@@ -805,9 +805,23 @@ const state = {
       const p = new URLSearchParams(window.location.search);
       const v = p.get('clouds');
       if (v === 'bluemarble' || v === 'modis' || v === 'gmgsi_static' || v === 'auto') return v;
-      const isPov = p.get('pov') === '1' || p.get('pov') === '2';
-      return isPov ? 'bluemarble' : 'auto';
-    } catch { return 'auto'; }
+      // r27.20: OBSERVER JOINS POV ON BLUE MARBLE. Visual audit of both
+      // "high-res" sources found them fundamentally broken as cloud maps:
+      //   - GMGSI visible mosaic: solid-white no-data band above ~60N (renders
+      //     as a fake polar cloud sheet), the capture-time day/night terminator
+      //     BAKED INTO the pixels (clouds vanish on the night side, gray wash
+      //     on the day side), and land albedo bleeding through as cloud.
+      //   - cloud_modis_median_16k.jpg bake: white Arctic sheet, black
+      //     Antarctic void, REPEATING sawtooth of missing swaths along ~75S,
+      //     vertical swath stripes, near-binary contrast. Needs a re-bake.
+      // The clean source is the NASA Blue Marble 8K local asset — exactly what
+      // POV/livestream has used since r27.9, which is why POV looked right
+      // while observer looked broken. Only real ISS mode (?iss=1) keeps
+      // 'auto' (live GMGSI is its LIVE-weather selling point); the r27.7
+      // lock gate then auto-disables the GMGSI pipeline everywhere else.
+      const isIss = p.get('iss') === '1';
+      return isIss ? 'auto' : 'bluemarble';
+    } catch { return 'bluemarble'; }
   })()
 };
 
@@ -2520,6 +2534,7 @@ requestAnimationFrame(frame);
 //   outer shell at R + 16km =  R × 1.002512  (covers cumulus AND cirrus altitude)
 console.log('[VOLCLOUDS] script loaded — build r3 (mesh-in-scene raymarch)');
 console.log('[PROCLAND]  script loaded — build r27.15 (BY-DAVID CREDIT: small dim line in the EARTHSHINE-1 caption block, reuses existing .tech class so no new CSS or layout changes. Sits below the tech-demo disclaimer.)');
+console.log('[PROCLAND.r27.20] CLOUD SOURCE CUTOVER + GEOSTATIC EARTH: visual audit proved BOTH hi-res cloud sources are broken DATA, not broken rendering — GMGSI visible mosaic has a solid-white no-data band above ~60N, the capture-time terminator baked into pixels, and land bleed; the 16K MODIS median bake has a white Arctic sheet, black Antarctic void, and a REPEATING sawtooth of missing swaths (the user-reported "fundamentally broken and repeating"). Observer/free modes now default to the clean NASA Blue Marble 8K (same as POV since r27.9 — why the livestream looked right all along); only ?iss=1 keeps live GMGSI. MODIS re-bake queued on GCP. Also: GEOSTATIC EARTH default — heliocentric position frozen at first tick (no 30 km/s world-space sweep; stable floats/lock-on), spin + Moon + all Earth orbits unchanged, ?heliocentric=1 restores the orbit.');
 console.log('[PROCLAND.r27.19] CLOUD JAGGIES + SPARKLE FIX: observer mode runs the live GMGSI pipeline (May "Observer mode clouds" commit) but the GMGSI CanvasTexture had generateMipmaps=false — correct at ISS/POV altitude (near-native sampling), catastrophic at observer distance where 16K minified ~8x with no mip chain point-samples 1-of-64 texels: jagged edges, shimmer, hot speckles. bumpMap read the same aliased samples → normal noise → GGX glints (Standard material keeps ~4% specular even at roughness 1) under the 5.2 sun = "shiny clouds". Fix: mips ON for GMGSI (+170 MB, desktop-only since r27.18 gates mobile off) and specularColor/F90 zeroed on both cloud layers — clouds have no specular BRDF; the HG silver-lining models their real forward-scatter gleam.');
 console.log('[PROCLAND.r27.18] MOBILE MEMORY SWEEP + HOVER-LOOK: (1) iOS Safari kills tabs near ~1.1-1.4 GB regardless of device power; 16K diffuse (512 MB decoded) + 16K clouds (512 MB) + 13.5K night (364 MB) + 8K spec pushed mobile past it → crash on any iPhone. Mobile now promotes 8K local assets for diffuse/clouds/night (povBudget mechanism), skips the GMGSI 16K canvas stitch, and the 16K/13K head preloads are gated media="(pointer: fine)". Desktop pixel-identical. (2) HOVER-LOOK: free-look now works from raw mouse motion when pointer lock is absent (modern browsers can reject the lock request post-Esc); lock path unchanged, UI panels excluded, lock rejections logged.');
 console.log('[PROCLAND.r27.17] SUN EXTINCTION — DISC ONLY: r27.16 reddened all 6 sun sprite layers + the lens flare, washing the entire glow warm — read as too dramatic and too long. Reality from orbit: only the sun DISC reddens (extinction colours the direct ray); the surrounding glare is white bloom from light that arrived before the disc hit thick air. Now corona0 (disc) takes the full exp(-τ) tint, corona1 a 35% hint to kill the disc/halo seam, corona2..4 + flare + the flare pass stay white. Added pow(T,0.6) whitening so the saturated-orange band is narrow. Result: brief orange flash on the disc alone, then white.');
@@ -7889,12 +7904,34 @@ function bindEvents(){
   });
 }
 
+// r27.20: GEOSTATIC EARTH (default). Earth's heliocentric position freezes at
+// its first-tick orbital angle: no more sweeping the scene at 30 km/s through
+// world space (stable camera-relative floats, stable lock-on, no drift under
+// time warp). Axial spin still runs (groups.earth.rotation.y drives the
+// day/night terminator), the Moon still orbits Earth, and every Earth-centered
+// orbit (observer / POV / ISS) is untouched. Known approximation: with the
+// orbit frozen, long time-warps skip the ~1°/day solar drift (sidereal vs
+// solar day) — irrelevant at 1× and invisible under warp. Restore true
+// heliocentric motion with ?heliocentric=1.
+const GEOSTATIC = (() => {
+  try { return new URLSearchParams(window.location.search).get('heliocentric') !== '1'; }
+  catch { return true; }
+})();
+let _geoStaticAngle = null;
+
 function updateBodies(t){
   bodies.sun.pos.set(0,0,0);
   bodies.sun.vel.set(0,0,0);
 
-  const ea = t / EARTH_YEAR * Math.PI * 2;
-  const earthSpeed = 2 * Math.PI * AU / EARTH_YEAR;
+  let ea = t / EARTH_YEAR * Math.PI * 2;
+  if (GEOSTATIC) {
+    if (_geoStaticAngle === null) _geoStaticAngle = ea;
+    ea = _geoStaticAngle;
+  }
+  // Frozen Earth carries no orbital velocity — ship/observer physics reads
+  // earth.vel, and a 29.8 km/s phantom velocity on a stationary body would
+  // corrupt relative-motion math.
+  const earthSpeed = GEOSTATIC ? 0 : 2 * Math.PI * AU / EARTH_YEAR;
   bodies.earth.pos.set(Math.cos(ea) * AU, 0, Math.sin(ea) * AU);
   bodies.earth.vel.set(-Math.sin(ea) * earthSpeed, 0, Math.cos(ea) * earthSpeed);
 
