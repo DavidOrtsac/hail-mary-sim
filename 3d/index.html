@@ -2534,6 +2534,7 @@ requestAnimationFrame(frame);
 //   outer shell at R + 16km =  R × 1.002512  (covers cumulus AND cirrus altitude)
 console.log('[VOLCLOUDS] script loaded — build r3 (mesh-in-scene raymarch)');
 console.log('[PROCLAND]  script loaded — build r27.15 (BY-DAVID CREDIT: small dim line in the EARTHSHINE-1 caption block, reuses existing .tech class so no new CSS or layout changes. Sits below the tech-demo disclaimer.)');
+console.log('[PROCLAND.r27.21] LINEAR-ALPHA RAMP FIX (the universal jaggies mechanism): cloud textures are SRGBColorSpace so the GPU hands the shader LINEAR samples, but the alpha thresholds 0.05/0.70 were authored in sRGB terms — effective ramp was sRGB 0.25→0.86, crushing every thin cloud fringe to zero (torn cookie-cutter edges) on ANY source including Blue Marble. Thresholds now 0.005/0.45 (linear equivalents), panel sliders synced. CORRECTION to the r27.19 log: issLoadLiveClouds is only reachable via issInit (?iss=1) — observer mode never ran GMGSI; its broken clouds were the MODIS median bake + this alpha crush.');
 console.log('[PROCLAND.r27.20] CLOUD SOURCE CUTOVER + GEOSTATIC EARTH: visual audit proved BOTH hi-res cloud sources are broken DATA, not broken rendering — GMGSI visible mosaic has a solid-white no-data band above ~60N, the capture-time terminator baked into pixels, and land bleed; the 16K MODIS median bake has a white Arctic sheet, black Antarctic void, and a REPEATING sawtooth of missing swaths (the user-reported "fundamentally broken and repeating"). Observer/free modes now default to the clean NASA Blue Marble 8K (same as POV since r27.9 — why the livestream looked right all along); only ?iss=1 keeps live GMGSI. MODIS re-bake queued on GCP. Also: GEOSTATIC EARTH default — heliocentric position frozen at first tick (no 30 km/s world-space sweep; stable floats/lock-on), spin + Moon + all Earth orbits unchanged, ?heliocentric=1 restores the orbit.');
 console.log('[PROCLAND.r27.19] CLOUD JAGGIES + SPARKLE FIX: observer mode runs the live GMGSI pipeline (May "Observer mode clouds" commit) but the GMGSI CanvasTexture had generateMipmaps=false — correct at ISS/POV altitude (near-native sampling), catastrophic at observer distance where 16K minified ~8x with no mip chain point-samples 1-of-64 texels: jagged edges, shimmer, hot speckles. bumpMap read the same aliased samples → normal noise → GGX glints (Standard material keeps ~4% specular even at roughness 1) under the 5.2 sun = "shiny clouds". Fix: mips ON for GMGSI (+170 MB, desktop-only since r27.18 gates mobile off) and specularColor/F90 zeroed on both cloud layers — clouds have no specular BRDF; the HG silver-lining models their real forward-scatter gleam.');
 console.log('[PROCLAND.r27.18] MOBILE MEMORY SWEEP + HOVER-LOOK: (1) iOS Safari kills tabs near ~1.1-1.4 GB regardless of device power; 16K diffuse (512 MB decoded) + 16K clouds (512 MB) + 13.5K night (364 MB) + 8K spec pushed mobile past it → crash on any iPhone. Mobile now promotes 8K local assets for diffuse/clouds/night (povBudget mechanism), skips the GMGSI 16K canvas stitch, and the 16K/13K head preloads are gated media="(pointer: fine)". Desktop pixel-identical. (2) HOVER-LOOK: free-look now works from raw mouse motion when pointer lock is absent (modern browsers can reject the lock request post-Esc); lock path unchanged, UI panels excluded, lock rejections logged.');
@@ -3705,8 +3706,8 @@ function initPostFX(){
       +   slider('ctrl-cloudTintR',       'Tint R',          0.0, 2.0, 0.01, 1.0)
       +   slider('ctrl-cloudTintG',       'Tint G',          0.0, 2.0, 0.01, 1.0)
       +   slider('ctrl-cloudTintB',       'Tint B',          0.0, 2.0, 0.01, 1.0)
-      +   slider('ctrl-cloudAlphaLow',    'Alpha low',       0.0, 0.5, 0.005, 0.05)
-      +   slider('ctrl-cloudAlphaHigh',   'Alpha high',      0.1, 1.0, 0.005, 0.70)
+      +   slider('ctrl-cloudAlphaLow',    'Alpha low',       0.0, 0.5, 0.005, 0.005)
+      +   slider('ctrl-cloudAlphaHigh',   'Alpha high',      0.1, 1.0, 0.005, 0.45)
       +   slider('ctrl-cloudSilver',      'Silver lining',   0.0, 3.0, 0.01, 0.95)
       +   slider('ctrl-cloudHgG',         'HG anisotropy',   0.0, 0.95, 0.01, 0.80)
       +   slider('ctrl-cloudLimbStart',   'Limb fade start', 0.0, 0.5, 0.005, 0.02)
@@ -5144,8 +5145,16 @@ function initSpace(){
   const uCloudOpacity     = { value: 1.0 };               // 0..2 multiplier on alpha
   const uCloudBrightness  = { value: 1.0 };               // 0..2 multiplier on RGB
   const uCloudTint        = { value: new THREE.Vector3(1, 1, 1) };  // RGB color multiplier
-  const uCloudAlphaLow    = { value: 0.05 };              // smoothstep low — tightness
-  const uCloudAlphaHigh   = { value: 0.70 };              // smoothstep high — tightness
+  // r27.21: LINEAR-DOMAIN ALPHA RAMP. The cloud texture is SRGBColorSpace, so
+  // the GPU hardware-decodes samples to LINEAR before the shader sees them —
+  // the old 0.05/0.70 thresholds (authored in sRGB terms) therefore acted as
+  // an sRGB 0.25→0.86 ramp: every thin cloud fringe below ~sRGB 63/255 was
+  // crushed to alpha 0 (torn cookie-cutter edges) and interiors saturated
+  // abruptly (hard white chunks) — on EVERY cloud source. These are the
+  // linear-space equivalents of the intended ramp. Low stays ≥0.004 so JPEG
+  // block noise near black remains below the ramp.
+  const uCloudAlphaLow    = { value: 0.005 };             // smoothstep low — tightness
+  const uCloudAlphaHigh   = { value: 0.45 };              // smoothstep high — tightness
   const uSilverStrength   = { value: 0.95 };              // HG silver-lining multiplier
   const uHgG              = { value: 0.80 };              // HG anisotropy (forward lobe)
   const uLimbAttenStart   = { value: 0.02 };              // limb fade start
