@@ -649,6 +649,19 @@ const MU_MOON = 4.9049e12;
 const MOON_A = 384400000;
 const EARTH_YEAR = 365.256363004 * 86400;
 const MOON_PERIOD = 27.321661 * 86400;
+// r27.20/.22: GEOSTATIC EARTH (default). Earth's heliocentric position
+// freezes at its first-tick orbital angle: no 30 km/s world-space sweep,
+// stable camera-relative floats and lock-on, no drift under time warp.
+// Axial spin still runs (day/night terminator), the Moon still orbits,
+// every Earth-centered orbit is untouched. ?heliocentric=1 restores the
+// real orbit. Declared HERE (module constants, before the init calls at
+// ~line 941) — declaring it next to updateBodies() put it in the temporal
+// dead zone at first call and killed the boot (r27.21 regression).
+const GEOSTATIC = (() => {
+  try { return new URLSearchParams(window.location.search).get('heliocentric') !== '1'; }
+  catch { return true; }
+})();
+let _geoStaticAngle = null;
 
 const SHIP = {
   thrustN: 30891e3,
@@ -2534,6 +2547,7 @@ requestAnimationFrame(frame);
 //   outer shell at R + 16km =  R × 1.002512  (covers cumulus AND cirrus altitude)
 console.log('[VOLCLOUDS] script loaded — build r3 (mesh-in-scene raymarch)');
 console.log('[PROCLAND]  script loaded — build r27.15 (BY-DAVID CREDIT: small dim line in the EARTHSHINE-1 caption block, reuses existing .tech class so no new CSS or layout changes. Sits below the tech-demo disclaimer.)');
+console.log('[PROCLAND.r27.22] BOOT HOTFIX: r27.21 declared const GEOSTATIC next to updateBodies() (~line 7930) but initShipState() calls updateBodies() during boot at ~line 954 — temporal dead zone ReferenceError killed the whole module mid-init (the _issCloudsLoaded error was cascade). GEOSTATIC + _geoStaticAngle now live in the module constants block (~line 660), before all init calls. Verified declaration precedes every call site.');
 console.log('[PROCLAND.r27.21] LINEAR-ALPHA RAMP FIX (the universal jaggies mechanism): cloud textures are SRGBColorSpace so the GPU hands the shader LINEAR samples, but the alpha thresholds 0.05/0.70 were authored in sRGB terms — effective ramp was sRGB 0.25→0.86, crushing every thin cloud fringe to zero (torn cookie-cutter edges) on ANY source including Blue Marble. Thresholds now 0.005/0.45 (linear equivalents), panel sliders synced. CORRECTION to the r27.19 log: issLoadLiveClouds is only reachable via issInit (?iss=1) — observer mode never ran GMGSI; its broken clouds were the MODIS median bake + this alpha crush.');
 console.log('[PROCLAND.r27.20] CLOUD SOURCE CUTOVER + GEOSTATIC EARTH: visual audit proved BOTH hi-res cloud sources are broken DATA, not broken rendering — GMGSI visible mosaic has a solid-white no-data band above ~60N, the capture-time terminator baked into pixels, and land bleed; the 16K MODIS median bake has a white Arctic sheet, black Antarctic void, and a REPEATING sawtooth of missing swaths (the user-reported "fundamentally broken and repeating"). Observer/free modes now default to the clean NASA Blue Marble 8K (same as POV since r27.9 — why the livestream looked right all along); only ?iss=1 keeps live GMGSI. MODIS re-bake queued on GCP. Also: GEOSTATIC EARTH default — heliocentric position frozen at first tick (no 30 km/s world-space sweep; stable floats/lock-on), spin + Moon + all Earth orbits unchanged, ?heliocentric=1 restores the orbit.');
 console.log('[PROCLAND.r27.19] CLOUD JAGGIES + SPARKLE FIX: observer mode runs the live GMGSI pipeline (May "Observer mode clouds" commit) but the GMGSI CanvasTexture had generateMipmaps=false — correct at ISS/POV altitude (near-native sampling), catastrophic at observer distance where 16K minified ~8x with no mip chain point-samples 1-of-64 texels: jagged edges, shimmer, hot speckles. bumpMap read the same aliased samples → normal noise → GGX glints (Standard material keeps ~4% specular even at roughness 1) under the 5.2 sun = "shiny clouds". Fix: mips ON for GMGSI (+170 MB, desktop-only since r27.18 gates mobile off) and specularColor/F90 zeroed on both cloud layers — clouds have no specular BRDF; the HG silver-lining models their real forward-scatter gleam.');
@@ -7913,21 +7927,11 @@ function bindEvents(){
   });
 }
 
-// r27.20: GEOSTATIC EARTH (default). Earth's heliocentric position freezes at
-// its first-tick orbital angle: no more sweeping the scene at 30 km/s through
-// world space (stable camera-relative floats, stable lock-on, no drift under
-// time warp). Axial spin still runs (groups.earth.rotation.y drives the
-// day/night terminator), the Moon still orbits Earth, and every Earth-centered
-// orbit (observer / POV / ISS) is untouched. Known approximation: with the
-// orbit frozen, long time-warps skip the ~1°/day solar drift (sidereal vs
-// solar day) — irrelevant at 1× and invisible under warp. Restore true
-// heliocentric motion with ?heliocentric=1.
-const GEOSTATIC = (() => {
-  try { return new URLSearchParams(window.location.search).get('heliocentric') !== '1'; }
-  catch { return true; }
-})();
-let _geoStaticAngle = null;
-
+// r27.22: GEOSTATIC const moved to the module constants block (~line 652).
+// It was declared HERE (after its first use): initShipState() at line ~941
+// calls updateBodies() during boot, which read GEOSTATIC while still in the
+// temporal dead zone → ReferenceError → the entire module died mid-init
+// (and _issCloudsLoaded never initialized, cascading a second error).
 function updateBodies(t){
   bodies.sun.pos.set(0,0,0);
   bodies.sun.vel.set(0,0,0);
