@@ -604,7 +604,20 @@ document.body.prepend(canvas);
 const IS_MOBILE = window.matchMedia('(pointer: coarse)').matches
   || (('ontouchstart' in window) && /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent));
 
-const renderer = new THREE.WebGLRenderer({canvas, antialias: !IS_MOBILE, alpha:false});
+// r27.24: canvas antialias OFF — every visible pixel comes out of the
+// EffectComposer, whose own 4x MSAA scene target does the real geometry AA.
+// Canvas MSAA only antialiased the final fullscreen quad (two triangles, no
+// edges on screen) while allocating a full-res multisample color+depth+stencil
+// default framebuffer (~hundreds of MB at retina res) and paying a full-res
+// resolve every frame. depth/stencil also OFF: the canvas only ever receives
+// that quad (GL bypasses depth test when no depth attachment exists).
+// powerPreference makes dual-GPU laptops pick the discrete GPU. Scene AA is
+// untouched — pixel-identical output.
+const renderer = new THREE.WebGLRenderer({
+  canvas, alpha: false,
+  antialias: false, depth: false, stencil: false,
+  powerPreference: 'high-performance'
+});
 // Cap pixel ratio at 1.5 on mobile (vs 3 on desktop). On retina iPhones that's
 // the difference between 1.5× and 3× framebuffer area = 4× the fragment cost.
 renderer.setPixelRatio(Math.min(devicePixelRatio, IS_MOBILE ? 1.5 : 3));
@@ -662,6 +675,16 @@ const GEOSTATIC = (() => {
   catch { return true; }
 })();
 let _geoStaticAngle = null;
+// r27.24: pre-allocated hot-path temps. updateBodies/stepShip run up to 240
+// physics substeps per frame under time warp; their per-call `new
+// THREE.Vector3/Quaternion` (up to ~720 allocations/frame at 10000x) was the
+// GC-pause source behind warp stutter. Declared HERE in the module constants
+// block — before the init calls (~line 954) — so they can never hit the
+// temporal-dead-zone boot crash that bit r27.21.
+const _moonRel  = new THREE.Vector3(), _moonVel = new THREE.Vector3();
+const _gravOut  = new THREE.Vector3();
+const _spinAxis = new THREE.Vector3();
+const _spinDq   = new THREE.Quaternion();
 
 const SHIP = {
   thrustN: 30891e3,
@@ -2547,6 +2570,7 @@ requestAnimationFrame(frame);
 //   outer shell at R + 16km =  R × 1.002512  (covers cumulus AND cirrus altitude)
 console.log('[VOLCLOUDS] script loaded — build r3 (mesh-in-scene raymarch)');
 console.log('[PROCLAND]  script loaded — build r27.15 (BY-DAVID CREDIT: small dim line in the EARTHSHINE-1 caption block, reuses existing .tech class so no new CSS or layout changes. Sits below the tech-demo disclaimer.)');
+console.log('[PROCLAND.r27.24] PERF TIER 1 (all pixel-identical): (1) canvas MSAA/depth/stencil OFF — composer 4x MSAA does the real AA, canvas only receives the final quad (~275 MB VRAM + a full-res resolve back); powerPreference high-performance. (2) MSAA on composer renderTarget2 only (where RenderPass draws geometry); rt1 receives only fullscreen quads (~430 MB VRAM + write-amp back). (3) atmosphere: merged Rayleigh+Mie light march (144 fewer sqrt/px) + skip the march when the planet blocks the sun (night-side pixels paid full cost for exactly 0.0). (4) navball/minimap: skipped when cockpit hidden, 15 Hz when visible (was 60 Hz repaint + GPU upload always). (5) spikePass disabled when sun brightness <= 0.005; filterPass disabled when all uniforms identity (sRGB encode verified to live in lensPass). (6) warp stutter: hot-path temps pre-allocated (updateBodies/gravityAt/spin — up to 720 allocs/frame at 10000x, now 0). (7) HUD text+raycast 60 Hz -> 4 Hz, skipped when hidden. (8) outer sun glow quads cropped to the visible-glow radius — the glow itself is unchanged, the discarded rim is <= 0.4/255. [r27.23 = film grain defaults 0 everywhere]');
 console.log('[PROCLAND.r27.22] BOOT HOTFIX: r27.21 declared const GEOSTATIC next to updateBodies() (~line 7930) but initShipState() calls updateBodies() during boot at ~line 954 — temporal dead zone ReferenceError killed the whole module mid-init (the _issCloudsLoaded error was cascade). GEOSTATIC + _geoStaticAngle now live in the module constants block (~line 660), before all init calls. Verified declaration precedes every call site.');
 console.log('[PROCLAND.r27.21] LINEAR-ALPHA RAMP FIX (the universal jaggies mechanism): cloud textures are SRGBColorSpace so the GPU hands the shader LINEAR samples, but the alpha thresholds 0.05/0.70 were authored in sRGB terms — effective ramp was sRGB 0.25→0.86, crushing every thin cloud fringe to zero (torn cookie-cutter edges) on ANY source including Blue Marble. Thresholds now 0.005/0.45 (linear equivalents), panel sliders synced. CORRECTION to the r27.19 log: issLoadLiveClouds is only reachable via issInit (?iss=1) — observer mode never ran GMGSI; its broken clouds were the MODIS median bake + this alpha crush.');
 console.log('[PROCLAND.r27.20] CLOUD SOURCE CUTOVER + GEOSTATIC EARTH: visual audit proved BOTH hi-res cloud sources are broken DATA, not broken rendering — GMGSI visible mosaic has a solid-white no-data band above ~60N, the capture-time terminator baked into pixels, and land bleed; the 16K MODIS median bake has a white Arctic sheet, black Antarctic void, and a REPEATING sawtooth of missing swaths (the user-reported "fundamentally broken and repeating"). Observer/free modes now default to the clean NASA Blue Marble 8K (same as POV since r27.9 — why the livestream looked right all along); only ?iss=1 keeps live GMGSI. MODIS re-bake queued on GCP. Also: GEOSTATIC EARTH default — heliocentric position frozen at first tick (no 30 km/s world-space sweep; stable floats/lock-on), spin + Moon + all Earth orbits unchanged, ?heliocentric=1 restores the orbit.');
@@ -3012,11 +3036,20 @@ function initPostFX(){
   const target = new THREE.WebGLRenderTarget(w, h, {
     type: THREE.HalfFloatType,
     colorSpace: THREE.LinearSRGBColorSpace,
-    samples: IS_MOBILE ? 0 : 4,
+    // r27.24: 0 samples HERE. This target becomes renderTarget1 (writeBuffer),
+    // which only ever receives fullscreen post-pass quads — MSAA there is
+    // mathematically a no-op that 4x-amplifies write bandwidth.
+    samples: 0,
     depthBuffer: true,
   });
   post.depthTexture = depthTexture;
   post.composer = new EffectComposer(renderer, target);
+  // r27.24: MSAA only on renderTarget2. Verified in vendor/postprocessing:
+  // RenderPass draws into readBuffer = renderTarget2, so it is the ONLY
+  // buffer containing geometry edges to antialias. Setting .samples before
+  // the first render is safe (three.js allocates GPU storage lazily).
+  // Scene antialiasing is exactly what it was — pixel-identical.
+  post.composer.renderTarget2.samples = IS_MOBILE ? 0 : 4;
   post.composer.setPixelRatio(renderer.getPixelRatio());
   post.composer.setSize(w, h);
 
@@ -4551,8 +4584,30 @@ function initSpace(){
   groups.sunCorona1 = addLayer(Rs * 5.0,   1.0, 0xffffff);
   groups.sunCorona2 = addLayer(Rs * 14.0,  0.85, 0xffffff);
   groups.sunCorona3 = addLayer(Rs * 40.0,  0.55, 0xffffff);
-  groups.sunCorona4 = addLayer(Rs * 110.0, 0.32, 0xffffff);
-  groups.sunFlare   = addLayer(Rs * 320.0, 0.18, 0xffffff);
+  // r27.24: the two OUTER layers are near-fullscreen additive quads whose
+  // border region is mathematically invisible — the glow texture is
+  // alpha(r) = (core + tail) · (1-r²)^2.5, windowed to zero at r=1. Render
+  // the IDENTICAL world-space glow from a texture cropped to the central
+  // 85% on a quad scaled by 0.85: every screen pixel keeps its exact alpha
+  // except the discarded rim, where layer alpha × opacity ≤ 0.37/255
+  // (corona4) and 0.21/255 (flare) — below one 8-bit quantization step, and
+  // the two cut radii don't coincide in screen space. The glow does NOT
+  // shrink; only the dead transparent border of the quad goes away (~28%
+  // less additive fill per layer when the sun is in frame).
+  const GLOW_CROP = 0.85;
+  const croppedGlowTex = coronaTex.clone();
+  croppedGlowTex.repeat.set(GLOW_CROP, GLOW_CROP);
+  croppedGlowTex.offset.set((1 - GLOW_CROP) / 2, (1 - GLOW_CROP) / 2);
+  croppedGlowTex.needsUpdate = true;
+  const addLayerCropped = (size, opacity) => {
+    const m = new THREE.SpriteMaterial({map:croppedGlowTex, color:0xffffff, transparent:true, opacity, blending:THREE.AdditiveBlending, depthWrite:false, toneMapped:false});
+    const s = new THREE.Sprite(m);
+    s.scale.set(size * GLOW_CROP, size * GLOW_CROP, 1);
+    groups.sun.add(s);
+    return s;
+  };
+  groups.sunCorona4 = addLayerCropped(Rs * 110.0, 0.32);
+  groups.sunFlare   = addLayerCropped(Rs * 320.0, 0.18);
 
   // Earth surface. At 1200 km altitude, terrain features are sub-pixel — normal
   // mapping just creates "play dough" plasticity. Keep it minimal (or off). Use
@@ -6279,19 +6334,25 @@ function initSpace(){
         return exp(-max(h, 0.0) / H);
       }
 
-      float opticalDepth(vec3 ro, vec3 rd, float H, int steps){
+      // r27.24: MERGED Rayleigh+Mie light march. The old code called
+      // opticalDepth() twice per view sample — two identical raySphere
+      // setups and two walks over the SAME sample points, differing only in
+      // scale height. One march now computes the altitude once per sample
+      // and both exponentials from it (144 fewer sqrt per pixel). The old
+      // per-call planet clamp is dropped deliberately: this is only invoked
+      // when the sun is NOT planet-blocked (blocked samples multiplied the
+      // result by exactly 0.0 anyway), and when unblocked the clamp can
+      // never fire (both planet-hit roots are behind the sample). Output is
+      // bit-identical to the double-march version.
+      vec2 opticalDepthRM(vec3 ro, vec3 rd){
         vec2 t = raySphere(ro, rd, uPlanetCenter, uAtmoRadius);
-        if(t.y < 0.0) return 0.0;
-        float end = t.y;
-        // If ray hits planet, stop there.
-        vec2 tp = raySphere(ro, rd, uPlanetCenter, uPlanetRadius);
-        if(tp.x > 0.0 && tp.x < end) end = tp.x;
-        float dt = end / float(steps);
-        float sum = 0.0;
-        for(int i = 0; i < 16; i++){
-          if(i >= steps) break;
+        if(t.y < 0.0) return vec2(0.0);
+        float dt = t.y / 6.0;
+        vec2 sum = vec2(0.0);
+        for(int i = 0; i < 6; i++){
           vec3 p = ro + rd * (float(i) + 0.5) * dt;
-          sum += densityAt(p, H) * dt;
+          float h = max(length(p - uPlanetCenter) - uPlanetRadius, 0.0);
+          sum += vec2(exp(-h / uAtmoRayleighH), exp(-h / uAtmoMieH)) * dt;
         }
         return sum;
       }
@@ -6332,8 +6393,7 @@ function initSpace(){
                      * ((1.0 - g2) * (1.0 + mu*mu))
                      / ((2.0 + g2) * pow(1.0 + g2 - 2.0*uAtmoMieG*mu, 1.5));
 
-        const int VIEW_STEPS  = 12;
-        const int LIGHT_STEPS = 6;
+        const int VIEW_STEPS  = 12;   // light march is 6 steps, inside opticalDepthRM
         float segLen = (tEnd - tStart) / float(VIEW_STEPS);
 
         vec3 sumR = vec3(0.0);
@@ -6348,17 +6408,19 @@ function initSpace(){
           odR += dR;
           odM += dM;
 
-          // Shadow the sample if the planet blocks the sun.
+          // Shadow the sample if the planet blocks the sun. r27.24: when
+          // blocked, the old code STILL ran both 6-step light marches and
+          // multiplied the result by 0.0 — night-side pixels paid the full
+          // cost for a guaranteed-zero contribution. Skip the march entirely;
+          // sumR/sumM receive exactly what they received before (nothing).
           vec2 ts = raySphere(sp, sunDir, uPlanetCenter, uPlanetRadius);
-          float sunBlocked = (ts.x > 0.0 && ts.y > 0.0) ? 0.0 : 1.0;
-
-          float odLR = opticalDepth(sp, sunDir, uAtmoRayleighH, LIGHT_STEPS);
-          float odLM = opticalDepth(sp, sunDir, uAtmoMieH,      LIGHT_STEPS);
-
-          vec3 tau = uAtmoRayleighBeta * (odR + odLR) + vec3(uAtmoMieBeta * 1.1) * (odM + odLM);
-          vec3 atten = exp(-tau) * sunBlocked;
-          sumR += dR * atten;
-          sumM += dM * atten;
+          if(!(ts.x > 0.0 && ts.y > 0.0)){
+            vec2 odL = opticalDepthRM(sp, sunDir);
+            vec3 tau = uAtmoRayleighBeta * (odR + odL.x) + vec3(uAtmoMieBeta * 1.1) * (odM + odL.y);
+            vec3 atten = exp(-tau);
+            sumR += dR * atten;
+            sumM += dM * atten;
+          }
         }
 
         // r27.5: scale factor and β values now uniforms. uAtmoSunIntensity
@@ -7950,10 +8012,10 @@ function updateBodies(t){
 
   const ma = t / MOON_PERIOD * Math.PI * 2;
   const moonSpeed = 2 * Math.PI * MOON_A / MOON_PERIOD;
-  const moonRel = new THREE.Vector3(Math.cos(ma) * MOON_A, 0, Math.sin(ma) * MOON_A);
-  const moonVel = new THREE.Vector3(-Math.sin(ma) * moonSpeed, 0, Math.cos(ma) * moonSpeed);
-  bodies.moon.pos.copy(bodies.earth.pos).add(moonRel);
-  bodies.moon.vel.copy(bodies.earth.vel).add(moonVel);
+  _moonRel.set(Math.cos(ma) * MOON_A, 0, Math.sin(ma) * MOON_A);
+  _moonVel.set(-Math.sin(ma) * moonSpeed, 0, Math.cos(ma) * moonSpeed);
+  bodies.moon.pos.copy(bodies.earth.pos).add(_moonRel);
+  bodies.moon.vel.copy(bodies.earth.vel).add(_moonVel);
 }
 
 function frame(now){
@@ -8089,10 +8151,23 @@ function frame(now){
   updateDoor(realDt);
   updatePlumes(realDt);
   updateHud();
-  drawNavball();
-  drawMinimap();
-  if(hud.navballTex) hud.navballTex.needsUpdate = true;
-  if(hud.minimapTex) hud.minimapTex.needsUpdate = true;
+  // r27.24: navball + minimap only exist on cockpit console meshes, which
+  // render solely through cockpitPass. They were repainted (2 full canvas
+  // rasterizations, ~230 heap allocations in drawMinimap's conic loop) and
+  // re-uploaded to the GPU (~2.3 MB texSubImage) EVERY frame — including in
+  // observer and ISS/POV modes where the cockpit is never rendered at all.
+  // Now: skipped entirely when cockpitPass is off, throttled to ~15 Hz when
+  // visible (instrument readouts; 15 Hz is indistinguishable on a console
+  // screen and it's what real glass-cockpit MFDs refresh at).
+  if(post.cockpitPass && post.cockpitPass.enabled){
+    if(now - (state._instrLast || 0) >= 66){
+      state._instrLast = now;
+      drawNavball();
+      drawMinimap();
+      if(hud.navballTex) hud.navballTex.needsUpdate = true;
+      if(hud.minimapTex) hud.minimapTex.needsUpdate = true;
+    }
+  }
 
   // Feed dynamic uniforms into the post chain. ShaderPass deep-clones the
   // uniforms object on construction, so we must reach into pass.uniforms
@@ -8124,6 +8199,27 @@ function frame(now){
         }
       }
     }
+  }
+  // r27.24: skip post passes that are mathematically a no-op THIS frame.
+  // spikePass: its shader is a pure tDiffuse copy whenever the sun brightness
+  // proxy is <= 0.005 (both style branches fail) — but the pass still paid a
+  // full-res HalfFloat read+write. filterPass: with every uniform at identity
+  // (Neutral preset, grain/vignette 0) it is an exact identity map. The
+  // EffectComposer reassigns renderToScreen to the last ENABLED pass each
+  // render (verified in vendor EffectComposer.js line 125), so disabling the
+  // tail pass cleanly promotes lensPass to screen. Pixel-identical output.
+  if(post.spikePass) post.spikePass.enabled = !!(post.uSunScreen && post.uSunScreen.value.z > 0.005);
+  if(post.filterPass && post.filterPass.uniforms){
+    const fu = post.filterPass.uniforms;
+    const g = fu.uGain.value;
+    post.filterPass.enabled = !(
+      fu.uExposure.value === 1.0 && fu.uSaturation.value === 1.0 &&
+      fu.uContrast.value === 1.0 && fu.uVibrance.value === 0.0 &&
+      fu.uTemperature.value === 0.0 && fu.uBlackPoint.value === 0.0 &&
+      fu.uWhitePoint.value === 1.0 && fu.uGrain.value === 0.0 &&
+      fu.uVignette.value === 0.0 &&
+      g.x === 1.0 && g.y === 1.0 && g.z === 1.0
+    );
   }
   // === Exposure pipeline ===
   // Three layers: (1) AUTO/MANUAL gate, (2) sun-adaptive base target with
@@ -8266,10 +8362,9 @@ function stepManualRotation(realDt){
   // Apply user-driven angular velocity (NOT the centrifuge component) at real time.
   const omega = ship.angVelLocal.length();
   if(omega > 1e-6){
-    const axisLocal = ship.angVelLocal.clone().normalize();
-    const axisWorld = axisLocal.applyQuaternion(ship.quat);
-    const dq = new THREE.Quaternion().setFromAxisAngle(axisWorld, omega * realDt);
-    ship.quat.premultiply(dq).normalize();
+    const axisWorld = _spinAxis.copy(ship.angVelLocal).normalize().applyQuaternion(ship.quat);
+    _spinDq.setFromAxisAngle(axisWorld, omega * realDt);
+    ship.quat.premultiply(_spinDq).normalize();
   }
   ship.angVelLocal.multiplyScalar(Math.exp(-realDt * 1.5));
 }
@@ -8305,7 +8400,10 @@ function stepShip(dt){
 
 
 function gravityAt(pos){
-  const a = new THREE.Vector3();
+  // r27.24: returns a shared scratch vector — every call site consumes the
+  // result before the next call (verified: stepShip copies into
+  // ship.lastAccelWorld, avatar/observer use it within their own step).
+  const a = _gravOut.set(0, 0, 0);
   for(const b of [bodies.sun, bodies.earth, bodies.moon]){
     tempV.copy(b.pos).sub(pos);
     const r2 = Math.max(1, tempV.lengthSq());
@@ -9218,7 +9316,18 @@ function updateDoor(dt){
   groups.doorLeafR.position.z = THREE.MathUtils.lerp(groups.doorClosedRZ, groups.doorOpenRZ, state.doorAnim);
 }
 
+let _hudLast = 0;
 function updateHud(){
+  // r27.24: this ran at 60 Hz — 7 textContent writes, an Intl
+  // toLocaleString, and a recursive raycast against every clickable mesh,
+  // every frame, INCLUDING observer/ISS modes where #hud is display:none
+  // (CSS lines ~103/121). Now: skipped when the HUD isn't shown, 4 Hz
+  // otherwise (same cadence the ISS strip has always used — readouts are
+  // indistinguishable, the raycast crosshair label lags at most 250 ms).
+  if(state.issMode || state.mode === 'observer') return;
+  const _nowMs = performance.now();
+  if(_nowMs - _hudLast < 250) return;
+  _hudLast = _nowMs;
   const vRelEarth = ship.vel.clone().sub(bodies.earth.vel).length();
   const mass = SHIP.dryMass + ship.fuel;
   const apparent = apparentAccelerationLocal();
