@@ -1612,12 +1612,17 @@ async function issLoadLiveClouds(){
     tex.wrapT = THREE.ClampToEdgeWrapping;
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.anisotropy = 4;
-    // CRITICAL at 16K: disable mipmaps. Mipmaps for a 16384x8192 RGBA
-    // texture would add ~170 MB extra GPU memory on top of the base 512 MB.
-    // LinearFilter (no mip) is what we want since the cloud sphere always
-    // renders close to texture-native resolution from any orbital angle.
-    tex.generateMipmaps = false;
-    tex.minFilter = THREE.LinearFilter;
+    // r27.19: MIPMAPS ON. The old "no mips" rationale only held for ISS/POV
+    // low orbit where the texture samples near-native. Observer mode zooms
+    // out to the full globe — a 16K texture minified ~8× with NO mip chain
+    // point-samples 1-of-64 texels per pixel: jagged cloud edges, temporal
+    // shimmer, and hot white speckles (the bumpMap reads the same aliased
+    // samples and turns them into normal noise → specular sparkle). The
+    // +170 MB VRAM is desktop-only spend now — mobile never reaches this
+    // code path (r27.18 gates GMGSI off on mobile entirely).
+    tex.generateMipmaps = true;
+    tex.minFilter = THREE.LinearMipmapLinearFilter;
+    tex.magFilter = THREE.LinearFilter;
     tex.needsUpdate = true;
     // Feed the live texture into the Earth shader's cloud-shadow uniform so
     // ground shadows correspond to actual overhead clouds, not the static
@@ -2515,6 +2520,7 @@ requestAnimationFrame(frame);
 //   outer shell at R + 16km =  R × 1.002512  (covers cumulus AND cirrus altitude)
 console.log('[VOLCLOUDS] script loaded — build r3 (mesh-in-scene raymarch)');
 console.log('[PROCLAND]  script loaded — build r27.15 (BY-DAVID CREDIT: small dim line in the EARTHSHINE-1 caption block, reuses existing .tech class so no new CSS or layout changes. Sits below the tech-demo disclaimer.)');
+console.log('[PROCLAND.r27.19] CLOUD JAGGIES + SPARKLE FIX: observer mode runs the live GMGSI pipeline (May "Observer mode clouds" commit) but the GMGSI CanvasTexture had generateMipmaps=false — correct at ISS/POV altitude (near-native sampling), catastrophic at observer distance where 16K minified ~8x with no mip chain point-samples 1-of-64 texels: jagged edges, shimmer, hot speckles. bumpMap read the same aliased samples → normal noise → GGX glints (Standard material keeps ~4% specular even at roughness 1) under the 5.2 sun = "shiny clouds". Fix: mips ON for GMGSI (+170 MB, desktop-only since r27.18 gates mobile off) and specularColor/F90 zeroed on both cloud layers — clouds have no specular BRDF; the HG silver-lining models their real forward-scatter gleam.');
 console.log('[PROCLAND.r27.18] MOBILE MEMORY SWEEP + HOVER-LOOK: (1) iOS Safari kills tabs near ~1.1-1.4 GB regardless of device power; 16K diffuse (512 MB decoded) + 16K clouds (512 MB) + 13.5K night (364 MB) + 8K spec pushed mobile past it → crash on any iPhone. Mobile now promotes 8K local assets for diffuse/clouds/night (povBudget mechanism), skips the GMGSI 16K canvas stitch, and the 16K/13K head preloads are gated media="(pointer: fine)". Desktop pixel-identical. (2) HOVER-LOOK: free-look now works from raw mouse motion when pointer lock is absent (modern browsers can reject the lock request post-Esc); lock path unchanged, UI panels excluded, lock rejections logged.');
 console.log('[PROCLAND.r27.17] SUN EXTINCTION — DISC ONLY: r27.16 reddened all 6 sun sprite layers + the lens flare, washing the entire glow warm — read as too dramatic and too long. Reality from orbit: only the sun DISC reddens (extinction colours the direct ray); the surrounding glare is white bloom from light that arrived before the disc hit thick air. Now corona0 (disc) takes the full exp(-τ) tint, corona1 a 35% hint to kill the disc/halo seam, corona2..4 + flare + the flare pass stay white. Added pow(T,0.6) whitening so the saturated-orange band is narrow. Result: brief orange flash on the disc alone, then white.');
 console.log('[PROCLAND.r27.16] SUN DISC EXTINCTION: the sun never turned orange at orbital sunrise because the atmosphere pass is ADDITIVE in-scatter — it can add limb glow over the sprites but can never subtract blue from the direct ray (extinction is multiplicative). updateSpaceObjects() now CPU-integrates camera→sun optical depth (32 midpoint samples, same live Rayleigh/Mie uniforms as the shader, 1.1× Mie extinction) and tints all 6 sun sprite layers + the lens flare pass by exp(-τ). Deep red at the limb → orange → white once the tangent ray clears ~40 km, matching real ISS sunrise footage. Brightness drop comes free: tinted HDR sprites bloom warm and dimmer.');
@@ -5199,6 +5205,18 @@ function initSpace(){
         return (1.0 - g2) / (12.566 * pow(max(d, 1e-4), 1.5));
       }
     ` + shader.fragmentShader;
+    // r27.19: ZERO SPECULAR on clouds. MeshStandardMaterial keeps a ~4%
+    // dielectric specular lobe even at roughness 1.0 — combined with the
+    // bumpMap-perturbed normals and the 5.2-intensity sun it reads as
+    // glinting sparkle ("shiny clouds"). Real clouds have NO specular BRDF;
+    // their gleam is forward scatter, which the HG silver-lining term below
+    // already models. Zeroing F0/F90 kills the glints, keeps the diffuse.
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <lights_physical_fragment>',
+      `#include <lights_physical_fragment>
+       material.specularColor = vec3(0.0);
+       material.specularF90 = 0.0;`
+    );
     // Custom alpha: animated FBM warp + self-shadow tap + edge fwidth softening.
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <alphamap_fragment>',
